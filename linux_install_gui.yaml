@@ -1,34 +1,92 @@
 ---
-- name: Install Default Ubuntu GUI
+- name: Install Default GUI (Universal)
   hosts: all
-  remote_user: ansible
   become: yes
   gather_facts: yes
 
   tasks:
-    - name: Update apt cache
-      apt:
+    # ---------------------------------------------------------
+    # 1. PRE-CHECKS: Is GUI already the default?
+    # ---------------------------------------------------------
+    - name: Check current systemd default target
+      ansible.builtin.command: systemctl get-default
+      register: current_target
+      changed_when: false
+      failed_when: false
+
+    - name: Stop if GUI is already the default boot target
+      ansible.builtin.debug:
+        msg: "System is already set to boot into GUI (graphical.target). Skipping installation."
+      when: "'graphical.target' in current_target.stdout"
+
+    - name: End play for host if GUI is present
+      ansible.builtin.meta: end_host
+      when: "'graphical.target' in current_target.stdout"
+
+    # ---------------------------------------------------------
+    # 2. SUSE HANDLING
+    # ---------------------------------------------------------
+    - name: Check SUSE status
+      ansible.builtin.debug:
+        msg: "SUSE Enterprise Linux detected. Assuming GUI is shipped/managed by system defaults. Skipping."
+      when: ansible_os_family == 'Suse'
+
+    - name: End play for SUSE hosts
+      ansible.builtin.meta: end_host
+      when: ansible_os_family == 'Suse'
+
+    # ---------------------------------------------------------
+    # 3. INSTALLATION: DEBIAN / UBUNTU FAMILY
+    # ---------------------------------------------------------
+    - name: Update apt cache (Debian/Ubuntu)
+      ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
 
-    - name: Install Ubuntu Desktop (this may take a while)
-      apt:
+    - name: Install Desktop Environment (Ubuntu)
+      ansible.builtin.apt:
         name: ubuntu-desktop
         state: present
-      register: gui_install
+      register: deb_gui_install
+      when: ansible_distribution == 'Ubuntu'
 
-    - name: Set graphical target as default (ensure boot to GUI)
-      file:
-        src: /lib/systemd/system/graphical.target
-        dest: /etc/systemd/system/default.target
-        state: link
-      when: gui_install.changed
+    - name: Install Desktop Environment (Debian)
+      ansible.builtin.apt:
+        name: task-gnome-desktop
+        state: present
+      register: deb_gui_install
+      when: ansible_distribution == 'Debian'
 
-    - name: Reboot to start the GUI
-      reboot:
+    # ---------------------------------------------------------
+    # 4. INSTALLATION: RHEL / ROCKY / ALMA FAMILY
+    # ---------------------------------------------------------
+    - name: Install Desktop Group (RHEL/Rocky)
+      ansible.builtin.dnf:
+        name: "@Server with GUI"
+        state: present
+      register: rhel_gui_install
+      when: ansible_os_family == 'RedHat'
+
+    # ---------------------------------------------------------
+    # 5. CONFIGURATION & REBOOT
+    # ---------------------------------------------------------
+    - name: Set system default to graphical target
+      ansible.builtin.systemd:
+        name: graphical.target
+        state: started
+        enabled: yes
+        # This effectively runs 'systemctl set-default graphical.target'
+      when: >
+        (deb_gui_install is changed) or 
+        (rhel_gui_install is changed)
+
+    - name: Reboot to initialize Desktop Environment
+      ansible.builtin.reboot:
         msg: "Rebooting system to initialize Desktop Environment"
         connect_timeout: 5
         reboot_timeout: 600
-        pre_reboot_delay: 0
-        post_reboot_delay: 30
-      when: gui_install.changed
+        pre_reboot_delay: 5
+      when: >
+        (deb_gui_install is changed) or 
+        (rhel_gui_install is changed)
