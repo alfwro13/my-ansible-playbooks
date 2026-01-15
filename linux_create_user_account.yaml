@@ -5,7 +5,7 @@
   gather_facts: yes
 
   vars:
-    # These will be overridden by Semaphore Extra Vars
+    # Default values (Overridden by Semaphore Environment/CLI Extra Vars)
     new_username: "defaultuser"
     new_password: "changeme"
     admin_group_map:
@@ -14,16 +14,30 @@
       Suse: "wheel"
 
   tasks:
+    # 1. Local dependency check for the Semaphore Runner
     - name: Ensure passlib is installed on the Semaphore runner
       ansible.builtin.pip:
         name: passlib
       delegate_to: localhost
       become: false
+
+    # 2. PROXMOX SAFETY: Wait for Cloud-Init to finish before modifying users
+    - name: Wait for Cloud-Init to finish provisioning
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    # 3. DEBUG: Show exactly what Semaphore passed to Ansible
+    - name: Display user to be created
+      ansible.builtin.debug:
+        msg: "Creating user [{{ new_username }}] on host [{{ inventory_hostname }}]"
+
+    # 4. Standard sudo installation
     - name: Ensure sudo package is installed
       ansible.builtin.package:
         name: sudo
         state: present
 
+    # 5. OS-Specific Logic
     - name: Enable wheel group in sudoers (SUSE only)
       ansible.builtin.lineinfile:
         path: /etc/sudoers
@@ -33,6 +47,7 @@
         validate: 'visudo -cf %s'
       when: ansible_os_family == 'Suse'
 
+    # 6. The User Creation
     - name: Create the user account
       ansible.builtin.user:
         name: "{{ new_username }}"
@@ -42,3 +57,16 @@
         append: yes
         create_home: yes
         state: present
+      register: user_result
+
+    # 7. VERIFICATION: Check the system database directly
+    - name: Verify user exists in /etc/passwd
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ new_username }}"
+      register: check_user
+
+    - name: Report verification status
+      ansible.builtin.debug:
+        msg: "User {{ new_username }} successfully verified in system database."
+      when: check_user is succeeded
