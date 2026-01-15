@@ -21,10 +21,15 @@
       delegate_to: localhost
       become: false
 
-    # 2. PROXMOX SAFETY: Wait for Cloud-Init to finish before modifying users
+# 2. PROXMOX SAFETY: Wait for Cloud-Init to finish before modifying users
     - name: Wait for Cloud-Init to finish provisioning
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
+      register: cloud_init_output
+      # Ignore the error code (2) if the status actually says "done"
+      failed_when: >
+        cloud_init_output.rc != 0 and 
+        'status: done' not in cloud_init_output.stdout
 
     # 3. DEBUG: Show exactly what Semaphore passed to Ansible
     - name: Display user to be created
