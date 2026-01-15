@@ -1,6 +1,6 @@
 ---
 - name: Create Sudo User (Interactive & Universal)
-  hosts: "{{ target | default('debian') }}"
+  hosts: all
   become: yes
   vars_prompt:
     - name: new_username

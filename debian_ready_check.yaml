@@ -1,6 +1,6 @@
 ---
 - name: Wait for Cloud-Init and APT to be ready
-  hosts: "{{ target | default('all') }}" 
+  hosts: all
   become: true
   gather_facts: false # Faster to skip until we know the system is ready
 

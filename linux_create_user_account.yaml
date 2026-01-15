@@ -1,6 +1,6 @@
 ---
 - name: Create Sudo User (Universal - Debian/RHEL/SUSE)
-  hosts: "{{ target | default('all') }}"
+  hosts: all
   become: yes
   gather_facts: yes # Required to detect OS Family
   

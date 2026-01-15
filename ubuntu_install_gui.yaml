@@ -1,6 +1,6 @@
 ---
 - name: Install Default Ubuntu GUI
-  hosts: "{{ target | default('debian') }}"
+  hosts: all
   remote_user: ansible
   become: yes
   gather_facts: yes
