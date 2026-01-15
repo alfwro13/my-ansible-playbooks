@@ -1,56 +1,61 @@
 ---
-- name: Set Universal Keyboard Layout (File-Based Method)
+- name: Set Universal Keyboard Layout to UK
   hosts: all
   become: true
   gather_facts: true
 
   tasks:
     # ==============================================================================
-    # 1. DEBIAN / UBUNTU FAMILY
-    #    Uses /etc/default/keyboard with code "gb"
+    # 1. DEBIAN / UBUNTU / KALI
+    #    Target: /etc/default/keyboard
+    #    Helper: console-setup
     # ==============================================================================
-    - name: Configure Debian/Ubuntu Keyboard
+    - name: Handle Debian/Ubuntu Family
       when: ansible_os_family == "Debian"
       block:
-        - name: Ensure /etc/default/keyboard exists
-          ansible.builtin.file:
-            path: /etc/default/keyboard
-            state: touch
-            mode: '0644'
+        - name: Ensure 'console-setup' is installed
+          ansible.builtin.apt:
+            name: console-setup
+            state: present
+            update_cache: yes
+            cache_valid_time: 3600
 
-        - name: Set XKBLAYOUT to gb (Debian Standard)
+        - name: Set XKBLAYOUT to gb in /etc/default/keyboard
           ansible.builtin.lineinfile:
             path: /etc/default/keyboard
             regexp: '^XKBLAYOUT='
             line: 'XKBLAYOUT="gb"'
-
-        - name: Apply changes immediately (setupcon)
-          ansible.builtin.command: setupcon
-          changed_when: false
-          # updates the current console cached fonts/keymaps
+            create: yes
+            mode: '0644'
+          notify: Refresh Debian Console
 
     # ==============================================================================
-    # 2. REDHAT / ROCKY / SUSE FAMILY
-    #    Uses /etc/vconsole.conf with code "uk" (Legacy standard for VC)
+    # 2. REDHAT / ROCKY / SUSE
+    #    Target: /etc/vconsole.conf
+    #    Helper: loadkeys (part of kbd package, usually default)
     # ==============================================================================
-    - name: Configure RHEL/Rocky/SUSE Keyboard
+    - name: Handle RedHat/Suse Family
       when: ansible_os_family == "RedHat" or ansible_os_family == "Suse"
       block:
-        - name: Ensure /etc/vconsole.conf exists
-          ansible.builtin.file:
-            path: /etc/vconsole.conf
-            state: touch
-            mode: '0644'
-
-        - name: Set KEYMAP to uk (RHEL/SUSE Standard)
+        - name: Set KEYMAP to uk in /etc/vconsole.conf
           ansible.builtin.lineinfile:
             path: /etc/vconsole.conf
             regexp: '^KEYMAP='
             line: 'KEYMAP="uk"'
+            create: yes
+            mode: '0644'
+          notify: Refresh RedHat Console
 
-        # This service loads the settings from vconsole.conf into the kernel
-        - name: Apply changes to current session
-          ansible.builtin.service:
-            name: systemd-vconsole-setup
-            state: restarted
-          ignore_errors: true
+  # ==============================================================================
+  # HANDLERS (Run only if changes were made)
+  # ==============================================================================
+  handlers:
+    - name: Refresh Debian Console
+      ansible.builtin.command: setupcon
+      # If setupcon still fails for some obscure reason, we don't want to crash the play
+      ignore_errors: true 
+
+    - name: Refresh RedHat Console
+      # Direct kernel load command for immediate effect
+      ansible.builtin.shell: loadkeys uk
+      ignore_errors: true
