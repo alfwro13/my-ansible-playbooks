@@ -1,42 +1,58 @@
 ---
-- name: Install Default GUI (Universal)
+- name: Install Default GUI (Universal & Verification Based)
   hosts: all
   become: yes
   gather_facts: yes
 
+  vars:
+    # We define a "Marker Package" for each OS. 
+    # If this package is present, we assume the GUI is fully installed.
+    # Debian/Ubuntu: gnome-session is the core session manager.
+    # RHEL/Rocky: gdm is the Gnome Display Manager (standard for Server GUI).
+    gui_marker_map:
+      Debian: "gnome-session"
+      Ubuntu: "ubuntu-desktop" 
+      RedHat: "gdm"
+      Rocky: "gdm"
+      AlmaLinux: "gdm"
+
   tasks:
     # ---------------------------------------------------------
-    # 1. PRE-CHECKS: Is GUI already the default?
+    # 1. VERIFICATION: CHECK REAL INSTALLED PACKAGES
     # ---------------------------------------------------------
-    - name: Check current systemd default target
-      ansible.builtin.command: systemctl get-default
-      register: current_target
-      changed_when: false
-      failed_when: false
+    - name: Gather the package facts (Check what is actually installed)
+      ansible.builtin.package_facts:
+        manager: auto
 
-    - name: Stop if GUI is already the default boot target
-      ansible.builtin.debug:
-        msg: "System is already set to boot into GUI (graphical.target). Skipping installation."
-      when: "'graphical.target' in current_target.stdout"
+    - name: Check if GUI is already installed (OS Agnostic)
+      ansible.builtin.set_fact:
+        gui_is_installed: "{{ gui_marker_map[ansible_distribution] in ansible_facts.packages }}"
+      ignore_errors: yes # Gracefully handle OS detection weirdness
 
-    - name: End play for host if GUI is present
-      ansible.builtin.meta: end_host
-      when: "'graphical.target' in current_target.stdout"
+    - name: Stop if GUI software is already present
+      block:
+        - name: Verify existing GUI
+          ansible.builtin.debug:
+            msg: "GUI Package ({{ gui_marker_map[ansible_distribution] }}) is already installed. Skipping."
+        
+        - name: End play for this host
+          ansible.builtin.meta: end_host
+      when: gui_is_installed | bool
 
     # ---------------------------------------------------------
-    # 2. SUSE HANDLING
+    # 2. SUSE HANDLING (Skip Logic)
     # ---------------------------------------------------------
-    - name: Check SUSE status
-      ansible.builtin.debug:
-        msg: "SUSE Enterprise Linux detected. Assuming GUI is shipped/managed by system defaults. Skipping."
+    - name: Handle SUSE Enterprise Linux
+      block:
+        - name: Log SUSE skip
+          ansible.builtin.debug:
+            msg: "SUSE detected. Assuming GUI is managed by system defaults/YaST. Skipping."
+        - name: End play for SUSE
+          ansible.builtin.meta: end_host
       when: ansible_os_family == 'Suse'
 
-    - name: End play for SUSE hosts
-      ansible.builtin.meta: end_host
-      when: ansible_os_family == 'Suse'
-
     # ---------------------------------------------------------
-    # 3. INSTALLATION: DEBIAN / UBUNTU FAMILY
+    # 3. INSTALLATION: DEBIAN FAMILY
     # ---------------------------------------------------------
     - name: Update apt cache (Debian/Ubuntu)
       ansible.builtin.apt:
@@ -48,38 +64,36 @@
       ansible.builtin.apt:
         name: ubuntu-desktop
         state: present
-      register: deb_gui_install
+      register: deb_install
       when: ansible_distribution == 'Ubuntu'
 
     - name: Install Desktop Environment (Debian)
       ansible.builtin.apt:
         name: task-gnome-desktop
         state: present
-      register: deb_gui_install
+      register: deb_install
       when: ansible_distribution == 'Debian'
 
     # ---------------------------------------------------------
-    # 4. INSTALLATION: RHEL / ROCKY / ALMA FAMILY
+    # 4. INSTALLATION: RHEL FAMILY
     # ---------------------------------------------------------
-    - name: Install Desktop Group (RHEL/Rocky)
+    - name: Install Desktop Group (RHEL/Rocky/Alma)
       ansible.builtin.dnf:
         name: "@Server with GUI"
         state: present
-      register: rhel_gui_install
+      register: rhel_install
       when: ansible_os_family == 'RedHat'
 
     # ---------------------------------------------------------
     # 5. CONFIGURATION & REBOOT
     # ---------------------------------------------------------
-    - name: Set system default to graphical target
+    # We force the link even if it existed before, because now we KNOW the software is there.
+    - name: Ensure boot target is set to graphical
       ansible.builtin.systemd:
         name: graphical.target
         state: started
         enabled: yes
-        # This effectively runs 'systemctl set-default graphical.target'
-      when: >
-        (deb_gui_install is changed) or 
-        (rhel_gui_install is changed)
+        daemon_reload: yes
 
     - name: Reboot to initialize Desktop Environment
       ansible.builtin.reboot:
@@ -88,5 +102,5 @@
         reboot_timeout: 600
         pre_reboot_delay: 5
       when: >
-        (deb_gui_install is changed) or 
-        (rhel_gui_install is changed)
+        (deb_install is changed) or 
+        (rhel_install is changed)
