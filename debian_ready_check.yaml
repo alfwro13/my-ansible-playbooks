@@ -1,6 +1,6 @@
 ---
 - name: Wait for Cloud-Init and APT to be ready
-  hosts: debian_vms  # Replace with your host group
+  hosts: "{{ target | default('all') }}" 
   become: true
   gather_facts: false # Faster to skip until we know the system is ready
 
