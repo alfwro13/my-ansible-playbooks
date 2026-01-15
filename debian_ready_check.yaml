@@ -1,0 +1,43 @@
+---
+- name: Wait for Cloud-Init and APT to be ready
+  hosts: debian_vms  # Replace with your host group
+  become: true
+  gather_facts: false # Faster to skip until we know the system is ready
+
+  tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+
+    - name: Wait for cloud-init to finish its jobs
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      register: cloud_init_output
+
+    - name: Display cloud-init status
+      ansible.builtin.debug:
+        var: cloud_init_output.stdout
+
+    - name: Ensure no APT locks exist
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other software managers to finish..."
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_wait
+      changed_when: false
+
+    - name: Final check - Try to update cache
+      ansible.builtin.apt:
+        update_cache: yes
+      register: apt_check
+      until: apt_check is success
+      retries: 5
+      delay: 10
+
+    - name: Confirm VM is ready for customization
+      ansible.builtin.debug:
+        msg: "Cloud-init is finished and APT is free. Proceeding with customization..."
