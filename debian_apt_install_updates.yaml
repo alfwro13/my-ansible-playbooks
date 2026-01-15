@@ -1,0 +1,12 @@
+---
+- name: Install updates on Debian hosts
+  hosts: " {{ target | default('debian') }}"
+  remote_user: ansible
+  become: yes
+  gather_facts: yes
+  tasks:
+   - name: Install updates on all debian systems
+     apt:
+       update_cache: yes
+       upgrade: yes
+

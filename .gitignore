@@ -1,0 +1,6 @@
+*.retry
+*.log
+*.txt
+.vault_pass
+*.ini
+ansible.cfg

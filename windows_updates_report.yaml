@@ -1,0 +1,27 @@
+---
+- name: Report Windows Update Status
+  hosts: windows  # Define your inventory group for Windows systems
+  gather_facts: no
+  tasks:
+    - name: Check for installed updates
+      win_updates:
+        state: installed
+      register: installed_updates
+
+    - name: Check for available updates
+      win_updates:
+        state: available
+      register: available_updates
+
+    - name: Report update status
+      set_fact:
+        update_report:
+          hostname: "{{ inventory_hostname }}"
+          is_up_to_date: "{{ available_updates.updates | length == 0 }}"
+          outstanding_updates: "{{ available_updates.updates | length }}"
+          installed_updates: "{{ installed_updates.updates | length }}"
+
+    - name: Output report to a file
+      copy:
+        dest: "/path/to/report/{{ inventory_hostname }}_update_report.yml"
+        content: "{{ update_report | to_yaml }}"

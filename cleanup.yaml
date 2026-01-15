@@ -1,0 +1,11 @@
+---
+- name: Cleanup old packages on Debian hosts
+  hosts: debian
+  remote_user: ansible
+  become: yes
+  gather_facts: yes
+  tasks:
+   - name: Clean up old stuff
+     apt:
+       autoremove: yes
+       purge: yes

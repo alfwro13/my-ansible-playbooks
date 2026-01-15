@@ -1,0 +1,31 @@
+---
+- name: Create Sudo User (Interactive & Universal)
+  hosts: "{{ target | default('debian') }}"
+  become: yes
+  vars_prompt:
+    - name: new_username
+      prompt: "Enter the new username"
+      private: no
+    - name: new_password
+      prompt: "Enter the password for this user"
+      private: yes
+      confirm: yes
+
+  tasks:
+    # 1. Ensure sudo is actually installed (Critical for minimal Debian)
+    - name: Ensure sudo package is installed
+      apt:
+        name: sudo
+        state: present
+        update_cache: yes
+
+    # 2. Create the user
+    - name: Create the user account
+      user:
+        name: "{{ new_username }}"
+        password: "{{ new_password | password_hash('sha512') }}"
+        shell: /bin/bash
+        groups: sudo  # Debian and Ubuntu both use the 'sudo' group
+        append: yes
+        create_home: yes
+        state: present

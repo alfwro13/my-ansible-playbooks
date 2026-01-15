@@ -1,0 +1,35 @@
+---
+- name: Install Default Ubuntu GUI
+  # Using the flexible target variable we discussed
+  hosts: "{{ target | default('debian') }}" 
+  remote_user: ansible
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Ubuntu Desktop (this may take a while)
+      apt:
+        name: ubuntu-desktop
+        state: present
+      register: gui_install
+
+    - name: Set graphical target as default (ensure boot to GUI)
+      file:
+        src: /lib/systemd/system/graphical.target
+        dest: /etc/systemd/system/default.target
+        state: link
+      when: gui_install.changed
+
+    - name: Reboot to start the GUI
+      reboot:
+        msg: "Rebooting system to initialize Desktop Environment"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+      when: gui_install.changed

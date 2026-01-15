@@ -1,0 +1,10 @@
+---
+- name: Cat
+  hosts: localhost
+  tasks:
+   - name: Cat
+     command: cat /etc/resolv.conf
+     register: resolv_output
+   - name: Print
+     debug:
+       var: resolv_output.stdout

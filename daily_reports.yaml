@@ -1,0 +1,8 @@
+---
+- name: Execute a daily_report.sh script.
+  hosts: debian
+  remote_user: ansible
+  sudo: yes
+  tasks:
+     - name: Execute the script
+       shell: /home/pi/daily_report.sh

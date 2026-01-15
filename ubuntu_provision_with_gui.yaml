@@ -1,0 +1,12 @@
+---
+- name: Full VM Provisioning Sequence
+  import_playbook: debian_apt_install_updates.yaml
+  
+- name: Install Proxmox Agent
+  import_playbook: debian_install_proxmox_agent.yaml
+
+- name: Create User Account
+  import_playbook: linux_create_user_account.yaml
+
+- name: Install GUI
+  import_playbook: ubuntu_install_gui.yaml
