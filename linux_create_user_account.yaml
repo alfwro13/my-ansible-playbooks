@@ -2,49 +2,38 @@
 - name: Create Sudo User (Universal - Debian/RHEL/SUSE)
   hosts: all
   become: yes
-  gather_facts: yes # Required to detect OS Family
-  
-  vars_prompt:
-    - name: new_username
-      prompt: "Enter the new username"
-      private: no
-    - name: new_password
-      prompt: "Enter the password for this user"
-      private: yes
-      confirm: yes
+  gather_facts: yes
 
-  # Map OS Families to their specific Admin Group names
   vars:
+    # These will be overridden by Semaphore Extra Vars
+    new_username: "defaultuser"
+    new_password: "changeme"
     admin_group_map:
       Debian: "sudo"
       RedHat: "wheel"
       Suse: "wheel"
 
   tasks:
-    # 1. Generic Package Install (Works for apt, dnf, yum, and zypper)
     - name: Ensure sudo package is installed
-      package:
+      ansible.builtin.package:
         name: sudo
         state: present
 
-    # 2. SUSE Specific Fix: Enable 'wheel' in sudoers if it's missing
     - name: Enable wheel group in sudoers (SUSE only)
-      lineinfile:
+      ansible.builtin.lineinfile:
         path: /etc/sudoers
         state: present
         regexp: '^%wheel ALL='
-        line: '%wheel ALL=(ALL) ALL'
+        line: '%wheel ALL=(ALL:ALL) ALL'
         validate: 'visudo -cf %s'
       when: ansible_os_family == 'Suse'
 
-    # 3. Create the User (Dynamically picks the right group)
     - name: Create the user account
-      user:
+      ansible.builtin.user:
         name: "{{ new_username }}"
         password: "{{ new_password | password_hash('sha512') }}"
         shell: /bin/bash
-        # Looks up the OS family in the variable map defined above
-        groups: "{{ admin_group_map[ansible_os_family] }}" 
+        groups: "{{ admin_group_map[ansible_os_family] | default('sudo') }}"
         append: yes
         create_home: yes
         state: present
