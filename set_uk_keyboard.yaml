@@ -1,0 +1,33 @@
+---
+- name: Set System Keyboard Layout to UK Standard
+  hosts: all
+  become: true
+  # We gather facts to ensure we can identify the OS family if we ever need to add specific overrides
+  gather_facts: true
+
+  tasks:
+    - name: Check current keyboard status
+      ansible.builtin.command: localectl status
+      register: localectl_output
+      changed_when: false
+
+    - name: Set Console (VC) keyboard layout to UK (gb)
+      ansible.builtin.command: localectl set-keymap gb
+      # 'uk' is sometimes used in older contexts, 'gb' is the modern standard. 
+      # We check if either is already present to ensure idempotency.
+      when: 
+        - "'VC Keymap: gb' not in localectl_output.stdout"
+        - "'VC Keymap: uk' not in localectl_output.stdout"
+
+    - name: Set X11 (GUI) keyboard layout to UK (gb)
+      ansible.builtin.command: localectl set-x11-keymap gb
+      # This ensures the graphical environment also respects the change
+      when: "'X11 Layout: gb' not in localectl_output.stdout"
+
+    # Some distros (specifically Debian/Ubuntu) need a refresh of the initramfs 
+    # so the keyboard layout is correct during the decryption/boot phase.
+    - name: Update initramfs (Debian/Ubuntu only)
+      ansible.builtin.command: update-initramfs -u
+      when: 
+        - ansible_os_family == "Debian"
+        - "'VC Keymap: gb' not in localectl_output.stdout"
