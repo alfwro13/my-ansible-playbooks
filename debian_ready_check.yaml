@@ -10,10 +10,11 @@
         delay: 5
         timeout: 300
 
-    - name: Wait for cloud-init to finish its jobs
-      ansible.builtin.command: cloud-init status --wait
-      changed_when: false
-      register: cloud_init_output
+    - name: Wait for cloud-init to finish (Check for boot-finished file)
+      ansible.builtin.wait_for:
+        path: /var/lib/cloud/instance/boot-finished
+        state: present
+        timeout: 300
 
     - name: Display cloud-init status
       ansible.builtin.debug:
