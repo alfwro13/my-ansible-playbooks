@@ -1,33 +1,56 @@
 ---
-- name: Set System Keyboard Layout to UK Standard
+- name: Set Universal Keyboard Layout (File-Based Method)
   hosts: all
   become: true
-  # We gather facts to ensure we can identify the OS family if we ever need to add specific overrides
   gather_facts: true
 
   tasks:
-    - name: Check current keyboard status
-      ansible.builtin.command: localectl status
-      register: localectl_output
-      changed_when: false
+    # ==============================================================================
+    # 1. DEBIAN / UBUNTU FAMILY
+    #    Uses /etc/default/keyboard with code "gb"
+    # ==============================================================================
+    - name: Configure Debian/Ubuntu Keyboard
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Ensure /etc/default/keyboard exists
+          ansible.builtin.file:
+            path: /etc/default/keyboard
+            state: touch
+            mode: '0644'
 
-    - name: Set Console (VC) keyboard layout to UK (gb)
-      ansible.builtin.command: localectl set-keymap gb
-      # 'uk' is sometimes used in older contexts, 'gb' is the modern standard. 
-      # We check if either is already present to ensure idempotency.
-      when: 
-        - "'VC Keymap: gb' not in localectl_output.stdout"
-        - "'VC Keymap: uk' not in localectl_output.stdout"
+        - name: Set XKBLAYOUT to gb (Debian Standard)
+          ansible.builtin.lineinfile:
+            path: /etc/default/keyboard
+            regexp: '^XKBLAYOUT='
+            line: 'XKBLAYOUT="gb"'
 
-    - name: Set X11 (GUI) keyboard layout to UK (gb)
-      ansible.builtin.command: localectl set-x11-keymap gb
-      # This ensures the graphical environment also respects the change
-      when: "'X11 Layout: gb' not in localectl_output.stdout"
+        - name: Apply changes immediately (setupcon)
+          ansible.builtin.command: setupcon
+          changed_when: false
+          # updates the current console cached fonts/keymaps
 
-    # Some distros (specifically Debian/Ubuntu) need a refresh of the initramfs 
-    # so the keyboard layout is correct during the decryption/boot phase.
-    - name: Update initramfs (Debian/Ubuntu only)
-      ansible.builtin.command: update-initramfs -u
-      when: 
-        - ansible_os_family == "Debian"
-        - "'VC Keymap: gb' not in localectl_output.stdout"
+    # ==============================================================================
+    # 2. REDHAT / ROCKY / SUSE FAMILY
+    #    Uses /etc/vconsole.conf with code "uk" (Legacy standard for VC)
+    # ==============================================================================
+    - name: Configure RHEL/Rocky/SUSE Keyboard
+      when: ansible_os_family == "RedHat" or ansible_os_family == "Suse"
+      block:
+        - name: Ensure /etc/vconsole.conf exists
+          ansible.builtin.file:
+            path: /etc/vconsole.conf
+            state: touch
+            mode: '0644'
+
+        - name: Set KEYMAP to uk (RHEL/SUSE Standard)
+          ansible.builtin.lineinfile:
+            path: /etc/vconsole.conf
+            regexp: '^KEYMAP='
+            line: 'KEYMAP="uk"'
+
+        # This service loads the settings from vconsole.conf into the kernel
+        - name: Apply changes to current session
+          ansible.builtin.service:
+            name: systemd-vconsole-setup
+            state: restarted
+          ignore_errors: true
