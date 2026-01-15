@@ -1,6 +1,6 @@
 ---
 - name: Install updates on Debian hosts
-  hosts: " {{ target | default('debian') }}"
+  hosts: "{{ target | default('debian') }}"
   remote_user: ansible
   become: yes
   gather_facts: yes

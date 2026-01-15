@@ -1,7 +1,6 @@
 ---
 - name: Install Default Ubuntu GUI
-  # Using the flexible target variable we discussed
-  hosts: "{{ target | default('debian') }}" 
+  hosts: "{{ target | default('debian') }}"
   remote_user: ansible
   become: yes
   gather_facts: yes
