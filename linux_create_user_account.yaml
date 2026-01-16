@@ -14,12 +14,6 @@
       Suse: "wheel"
 
   tasks:
-    # 1. Local dependency check for the Semaphore Runner
-    - name: Ensure passlib is installed on the Semaphore runner
-      ansible.builtin.pip:
-        name: passlib
-      delegate_to: localhost
-      become: false
 
 # 2. PROXMOX SAFETY: Wait for Cloud-Init to finish before modifying users
     - name: Wait for Cloud-Init to finish provisioning
