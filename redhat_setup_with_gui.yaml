@@ -1,0 +1,17 @@
+---
+# ------------------------------------------------------------------------------
+# MASTER PLAYBOOK: New Server Setup
+# ------------------------------------------------------------------------------
+
+- import_playbook: redhat_subscription_register.yaml
+
+- import_playbook: linux_update_ansible_user_display_name.yaml
+
+- import_playbook: redhat_install_proxmox_agent.yaml
+
+- import_playbook: redhat_install_updates.yaml
+
+- import_playbook: linux_install_gui.yaml
+
+- import_playbook: set_uk_keyboard.yaml
+
