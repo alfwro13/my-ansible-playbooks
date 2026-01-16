@@ -1,5 +1,5 @@
 ---
-- name: Set Universal Keyboard Layout to UK
+- name: Set Universal Locale & Keyboard to UK
   hosts: all
   become: true
   gather_facts: true
@@ -7,20 +7,27 @@
   tasks:
     # ==============================================================================
     # 1. DEBIAN / UBUNTU / KALI
-    #    Target: /etc/default/keyboard
-    #    Helper: console-setup
+    #    Method: edit /etc/default/keyboard
     # ==============================================================================
     - name: Handle Debian/Ubuntu Family
       when: ansible_os_family == "Debian"
       block:
-        - name: Ensure 'console-setup' is installed
+        - name: Ensure 'console-setup' and locales are installed
           ansible.builtin.apt:
-            name: console-setup
+            name: 
+              - console-setup
+              - locales
             state: present
             update_cache: yes
             cache_valid_time: 3600
 
-        - name: Set XKBLAYOUT to gb in /etc/default/keyboard
+        # Debian Specific: Generate the locale if missing
+        - name: Generate en_GB.UTF-8 locale
+          ansible.builtin.locale_gen:
+            name: en_GB.UTF-8
+            state: present
+
+        - name: Set Keyboard Layout (XKBLAYOUT) to gb
           ansible.builtin.lineinfile:
             path: /etc/default/keyboard
             regexp: '^XKBLAYOUT='
@@ -31,31 +38,31 @@
 
     # ==============================================================================
     # 2. REDHAT / ROCKY / SUSE
-    #    Target: /etc/vconsole.conf
-    #    Helper: loadkeys (part of kbd package, usually default)
+    #    Method: localectl (Systemd standard)
     # ==============================================================================
     - name: Handle RedHat/Suse Family
       when: ansible_os_family == "RedHat" or ansible_os_family == "Suse"
       block:
-        - name: Set KEYMAP to uk in /etc/vconsole.conf
-          ansible.builtin.lineinfile:
-            path: /etc/vconsole.conf
-            regexp: '^KEYMAP='
-            line: 'KEYMAP="uk"'
-            create: yes
-            mode: '0644'
-          notify: Refresh RedHat Console
+        - name: Ensure English language packs are installed
+          ansible.builtin.dnf:
+            name: langpacks-en
+            state: present
+          ignore_errors: true # In case the package name differs on older versions
+
+        # 1. Set the System Language (The command you found)
+        - name: Set System Locale to British English (en_GB)
+          ansible.builtin.command: localectl set-locale LANG=en_GB.utf8
+          changed_when: false # localectl handles state, running it again is harmless
+
+        # 2. Set the Keyboard Layout (The 'uk' map is standard for RHEL console)
+        - name: Set Console Keyboard Layout to UK
+          ansible.builtin.command: localectl set-keymap uk
+          changed_when: false
 
   # ==============================================================================
-  # HANDLERS (Run only if changes were made)
+  # HANDLERS
   # ==============================================================================
   handlers:
     - name: Refresh Debian Console
       ansible.builtin.command: setupcon
-      # If setupcon still fails for some obscure reason, we don't want to crash the play
-      ignore_errors: true 
-
-    - name: Refresh RedHat Console
-      # Direct kernel load command for immediate effect
-      ansible.builtin.shell: loadkeys uk
       ignore_errors: true
