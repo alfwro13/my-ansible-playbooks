@@ -32,7 +32,6 @@
           - "Download URL:    {{ image_url }}"
           - "Filename:        {{ image_filename }}"
           - "Template ID:     {{ template_id }}"
-          - "Template Name:   {{ vm_name }}"
 
     # ==========================================================================
     # 1. DOWNLOAD IMAGE (API)
@@ -46,7 +45,6 @@
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
         body_format: json
         body:
-          # Use 'import' content type for raw disk images (qcow2/img)
           content: "import"
           filename: "{{ image_filename }}"
           url: "{{ image_url }}"
@@ -61,17 +59,12 @@
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
       register: task_status
-      # Check status every 10s, wait up to 20 minutes
       until: task_status.json.data.status == "stopped"
       retries: 120
       delay: 10
       failed_when: 
         - task_status.json.data.status == "stopped" 
         - task_status.json.data.exitstatus != "OK"
-
-    - name: Download Verification
-      ansible.builtin.debug:
-        msg: "Download complete. Proceeding to VM creation using {{ storage }}:import/{{ image_filename }}"
 
     # ==========================================================================
     # 2. CLEANUP OLD VM
@@ -110,7 +103,6 @@
         scsihw: virtio-scsi-pci
         
         # Import the file we just downloaded
-        # Syntax: STORAGE:import/FILENAME
         scsi:
           scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ image_filename }},ssd=1,discard=on"
         
@@ -153,3 +145,25 @@
         node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         template: true
+
+    # ==========================================================================
+    # 6. CLEANUP IMPORTED IMAGE
+    # ==========================================================================
+    - name: Delete Source Image from Storage
+      ansible.builtin.uri:
+        # API Path to delete content: /nodes/{node}/storage/{storage}/content/{volume_id}
+        # Volume ID format: STORAGE_ID:import/FILENAME
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:import/{{ image_filename }}"
+        method: DELETE
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+      register: delete_result
+      # Don't fail the whole playbook if cleanup hiccups (e.g., file already gone)
+      failed_when: false
+      changed_when: delete_result.status == 200
+
+    - name: Report Cleanup Status
+      ansible.builtin.debug:
+        msg: "Source image {{ image_filename }} deleted from {{ storage }}."
+      when: delete_result.status == 200
