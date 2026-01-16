@@ -1,71 +1,36 @@
 ---
-- name: Test Proxmox Connectivity
-  hosts: localhost
+- name: Test Proxmox Connectivity (Using Inventory)
+  # 1. Target the 'all' group or a specific group from your inventory
+  hosts: all
+  
+  # 2. IMPORTANT: Run tasks on Semaphore, not via SSH on the Proxmox server
   connection: local
   gather_facts: false
 
   vars:
-    # ---------------------------------------------------------
-    # SECURE PASSWORD HANDLING
-    # ---------------------------------------------------------
-    # We use lookup('env', ...) to grab the value you set in 
-    # the Semaphore "Secrets" tab.
-    # ---------------------------------------------------------
+    # We still use the Secret for the password to ensure it works reliably
+    # regardless of how Semaphore injects SSH credentials.
     pve_password: "{{ lookup('env', 'PROXMOX_PASSWORD') }}"
 
-    # Default SSL check to false (change to true if you have valid certs)
-    pve_verify_ssl: false
-
   tasks:
-    # ---------------------------------------------------------
-    # 1. Validation Checks
-    # ---------------------------------------------------------
-    - name: Verify Extra Variables are defined
-      assert:
-        that:
-          - pve_host is defined
-          - pve_user is defined
-          - pve_node is defined
-        fail_msg: >-
-          Missing variables! Please check your Semaphore Environment 
-          'Extra Variables' tab. We need: pve_host, pve_user, and pve_node.
+    - name: Debug Inventory Data
+      debug:
+        msg: 
+          - "Targeting Host from Inventory: {{ inventory_hostname }}"
+          - "Using IP: {{ ansible_host }}"
+          - "Using User: {{ ansible_user }}"
 
-    - name: Verify Secret Password is loaded
-      assert:
-        that:
-          - pve_password | length > 0
-        fail_msg: >-
-          Password is missing! Please check your Semaphore Environment 
-          'Secrets' tab. Ensure you added a secret named 'PROXMOX_PASSWORD'.
-
-    # ---------------------------------------------------------
-    # 2. Check Dependencies
-    # ---------------------------------------------------------
-    - name: Check for 'proxmoxer' Python library
-      command: python3 -c "import proxmoxer"
-      changed_when: false
-
-    # ---------------------------------------------------------
-    # 3. Test Connectivity
-    # ---------------------------------------------------------
-    - name: Connect to Proxmox and Get Version
+    - name: Connect to Proxmox
       community.general.proxmox_query:
-        api_host: "{{ pve_host }}"
-        api_user: "{{ pve_user }}"
-        api_password: "{{ pve_password }}"
-        node: "{{ pve_node }}"
-        validate_certs: "{{ pve_verify_ssl }}"
+        # 3. Map Inventory Variables to API Parameters
+        api_host: "{{ ansible_host }}"  # The IP defined in Inventory
+        api_user: "{{ ansible_user }}"  # The User defined in Inventory
+        api_password: "{{ pve_password }}" # The Secret Variable
+        node: "{{ inventory_hostname }}"   # Assumes inventory alias matches Proxmox Node name
+        validate_certs: false
         query: version
       register: pve_version
 
-    - name: Success Message
+    - name: Display Result
       debug:
-        msg: 
-          - "---------------------------------------------------"
-          - " CONNECTION SUCCESSFUL"
-          - "---------------------------------------------------"
-          - " Target Node:    {{ pve_node }} ({{ pve_host }})"
-          - " User:           {{ pve_user }}"
-          - " Proxmox Ver:    {{ pve_version.response.version }}"
-          - " Repo Status:    {{ pve_version.response.repoid }}"
-          - "---------------------------------------------------"
+        msg: "Successfully connected to {{ inventory_hostname }} running version {{ pve_version.response.version }}"
