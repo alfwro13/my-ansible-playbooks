@@ -94,7 +94,6 @@
         name: "{{ vm_name }}"
         pool: "{{ resource_pool }}"
         
-        # Hardware Config
         memory: "{{ vm_memory | default(2048) }}"
         cores: "{{ vm_cores | default(2) }}"
         cpu: host
@@ -102,26 +101,24 @@
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
-        # Import the file we just downloaded
         scsi:
           scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ image_filename }},ssd=1,discard=on"
         
         ide:
           ide2: "{{ storage }}:cloudinit"
         boot: "order=scsi0"
-        
         ostype: l26
         vga: std
         agent: "enabled=1,fstrim_cloned_disks=1"
         hotplug: "disk,network,usb,memory,cpu"
         
-        state: present
+        state: present # Ensures VM is created but STOPPED
         timeout: 300
 
     # ==========================================================================
-    # 4. CONFIGURATION FIXES (NUMA)
+    # 4. CONFIGURATION FIXES (NUMA & TEMPLATE)
     # ==========================================================================
-    - name: Enable NUMA (API Workaround)
+    - name: Enable NUMA (API Direct)
       ansible.builtin.uri:
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
         method: POST
@@ -133,33 +130,28 @@
           numa: 1
       changed_when: true
 
-    # ==========================================================================
-    # 5. FINALIZE (CONVERT TO TEMPLATE)
-    # ==========================================================================
-    - name: Convert VM {{ template_id }} to Template
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        template: true
+    # FIX: Use Direct API call to convert to template (More robust than module)
+    - name: Convert to Template (API Direct)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/template"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+      register: template_convert
+      changed_when: true
 
     # ==========================================================================
-    # 6. CLEANUP IMPORTED IMAGE
+    # 5. CLEANUP IMPORTED IMAGE
     # ==========================================================================
     - name: Delete Source Image from Storage
       ansible.builtin.uri:
-        # API Path to delete content: /nodes/{node}/storage/{storage}/content/{volume_id}
-        # Volume ID format: STORAGE_ID:import/FILENAME
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:import/{{ image_filename }}"
         method: DELETE
         validate_certs: false
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
       register: delete_result
-      # Don't fail the whole playbook if cleanup hiccups (e.g., file already gone)
       failed_when: false
       changed_when: delete_result.status == 200
 
