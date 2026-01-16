@@ -20,17 +20,15 @@
           - "Using IP: {{ ansible_host }}"
           - "Using User: {{ ansible_user }}"
 
-    - name: Connect to Proxmox
-      community.general.proxmox_query:
-        # 3. Map Inventory Variables to API Parameters
-        api_host: "{{ ansible_host }}"  # The IP defined in Inventory
-        api_user: "{{ ansible_user }}"  # The User defined in Inventory
-        api_password: "{{ pve_password }}" # The Secret Variable
-        node: "{{ inventory_hostname }}"   # Assumes inventory alias matches Proxmox Node name
+  - name: Connect to Proxmox and Get Node Info
+      community.proxmox.proxmox_node_info:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user }}"
+        api_password: "{{ pve_password }}"
+        node: "{{ inventory_hostname }}"
         validate_certs: false
-        query: version
-      register: pve_version
+      register: pve_info
 
     - name: Display Result
       debug:
-        msg: "Successfully connected to {{ inventory_hostname }} running version {{ pve_version.response.version }}"
+        msg: "Successfully connected to {{ inventory_hostname }}. Node status: {{ pve_info.proxmox_node_info.status | default('unknown') }}"
