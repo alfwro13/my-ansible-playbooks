@@ -1,0 +1,27 @@
+---
+- name: Register Red Hat Systems
+  hosts: all
+  become: yes
+  gather_facts: false
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0. VALIDATION
+    # --------------------------------------------------------------------------
+    - name: Validate Subscription Variables
+      ansible.builtin.debug:
+        msg: "Checking Red Hat credentials..."
+      vars:
+        check_org: "{{ rh_org_id | mandatory }}"
+        check_key: "{{ rh_activation_key | mandatory }}"
+
+    # --------------------------------------------------------------------------
+    # 1. REGISTER SYSTEM
+    # --------------------------------------------------------------------------
+    - name: Register system with Activation Key
+      community.general.redhat_subscription:
+        state: present
+        org_id: "{{ rh_org_id }}"
+        activationkey: "{{ rh_activation_key }}"
+        # Auto-attach ensures the system gets a valid pool immediately
+        auto_attach: true
