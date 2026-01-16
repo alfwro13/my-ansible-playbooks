@@ -25,6 +25,7 @@
         msg: 
           - "Target Node:     {{ target_node }}"
           - "Target Storage:  {{ storage }}"
+          - "Content Type:    import"
           - "Download URL:    {{ image_url }}"
           - "Save As:         {{ image_filename }}"
 
@@ -41,7 +42,8 @@
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
         body_format: json
         body:
-          content: "iso" # 'iso' is the standard content type for image files in this API
+          # FIX: Changed from 'iso' to 'import' to match your storage configuration
+          content: "import"
           filename: "{{ image_filename }}"
           url: "{{ image_url }}"
       register: download_task
