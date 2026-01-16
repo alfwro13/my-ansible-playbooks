@@ -1,34 +1,31 @@
 ---
-- name: Test Proxmox Connectivity (Using Inventory)
-  # 1. Target the 'all' group or a specific group from your inventory
+- name: Test Proxmox Connectivity (Using Module)
   hosts: all
-  
-  # 2. IMPORTANT: Run tasks on Semaphore, not via SSH on the Proxmox server
   connection: local
   gather_facts: false
 
   vars:
-    # We still use the Secret for the password to ensure it works reliably
-    # regardless of how Semaphore injects SSH credentials.
     pve_password: "{{ lookup('env', 'PROXMOX_PASSWORD') }}"
 
   tasks:
     - name: Debug Inventory Data
       debug:
         msg: 
-          - "Targeting Host from Inventory: {{ inventory_hostname }}"
-          - "Using IP: {{ ansible_host }}"
-          - "Using User: {{ ansible_user }}"
+          - "Targeting Host: {{ inventory_hostname }}"
+          - "API Host: {{ ansible_host }}"
+          - "Full User String: {{ ansible_user }}"
 
     - name: Connect to Proxmox and Get Node Info
       community.proxmox.proxmox_node_info:
         api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user }}"
-        api_password: "{{ pve_password }}"
-        node: "{{ inventory_hostname }}"
+        # Split 'ansible@pve!ansible-token' into 'ansible@pve'
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        # Split 'ansible@pve!ansible-token' into 'ansible-token'
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
         validate_certs: false
       register: pve_info
 
-    - name: Display Result
+    - name: Display Found Nodes
       debug:
-        msg: "Successfully connected to {{ inventory_hostname }}. Node status: {{ pve_info.proxmox_node_info.status | default('unknown') }}"
+        msg: "Found Nodes: {{ pve_info.proxmox_nodes | map(attribute='node') | list }}"
