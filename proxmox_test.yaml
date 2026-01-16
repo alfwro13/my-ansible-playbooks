@@ -7,15 +7,9 @@
   vars:
     pve_password: "{{ lookup('env', 'PROXMOX_PASSWORD') }}"
 
-  tasks:
-    - name: Ensure 'proxmoxer' and 'requests' are installed
-      ansible.builtin.pip:
-        name: 
-          - proxmoxer
-          - requests
-        state: present
-      delegate_to: localhost
+#proxmoxer installed via apt install python3-proxmoxer python3-requests for system wide availability
 
+  tasks:
     - name: Connect to Proxmox and Get Node Info
       community.proxmox.proxmox_node_info:
         api_host: "{{ ansible_host }}"
