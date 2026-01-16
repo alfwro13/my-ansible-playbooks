@@ -54,7 +54,7 @@
         api_user: "{{ ansible_user.split('!')[0] }}"
         api_token_id: "{{ ansible_user.split('!')[1] }}"
         api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"   # <--- Uses the Survey Variable
+        node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         name: "{{ vm_name }}"
         pool: "{{ resource_pool }}"
@@ -66,9 +66,9 @@
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
-        # DISK IMPORT
+        # FIX: URL-encode the image URL so Proxmox doesn't split on 'https:'
         scsi:
-          scsi0: "{{ storage }}:0,import-from={{ image_url }},ssd=1,discard=on"
+          scsi0: "{{ storage }}:0,import-from={{ image_url | urlencode }},ssd=1,discard=on"
         
         # CLOUD-INIT
         ide:
