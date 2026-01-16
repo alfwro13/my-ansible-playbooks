@@ -6,28 +6,26 @@
     # --- RED HAT LOGIC ---
     - name: Handle Red Hat Registration and Updates
       block:
-        - name: Check registration status
-          ansible.builtin.command: subscription-manager status
-          register: rh_status
-          changed_when: false
-          failed_when: false
+        - name: Verify Registration via RHSM Facts
+          # This module refreshes subscription facts specifically
+          community.general.redhat_subscription_info:
+          register: rhsm_info
 
         - name: Fail if Red Hat is not registered
           ansible.builtin.fail:
-            msg: "System is Red Hat but NOT registered. Please register before updating."
-          when: "'Overall Status: Current' not in rh_status.stdout"
+            msg: "System is Red Hat but NOT registered according to RHSM."
+          # Logic: If the list of subscriptions is empty, it's not registered
+          when: rhsm_info.subscriptions | length == 0
 
         - name: Install all updates for Red Hat
           ansible.builtin.dnf:
             name: "*"
             state: latest
-      when: ansible_os_family == "RedHat" and ansible_distribution == "RedHat"
+      when: ansible_distribution == "RedHat"
 
     # --- ROCKY / CENTOS LOGIC ---
     - name: Update Rocky or CentOS Systems
       ansible.builtin.dnf:
         name: "*"
         state: latest
-      when: 
-        - ansible_os_family == "RedHat"
-        - ansible_distribution in ["Rocky", "CentOS"]
+      when: ansible_distribution in ["Rocky", "CentOS"]
