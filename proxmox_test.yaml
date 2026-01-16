@@ -1,0 +1,23 @@
+---
+- name: Test Proxmox Connectivity
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Debug Connection Info (Sanity Check)
+      debug:
+        msg: "Connecting to Proxmox Node '{{ pve_node }}' at {{ pve_host }} as {{ pve_user }}"
+
+    - name: Get Proxmox Version
+      community.general.proxmox_query:
+        api_host: "{{ pve_host }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_password }}"
+        node: "{{ pve_node }}"
+        validate_certs: false
+      register: pve_version
+
+    - name: Display Version
+      debug:
+        msg: "Success! Proxmox Version: {{ pve_version.response.version }}"
