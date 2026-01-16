@@ -1,16 +1,15 @@
 ---
-- name: Create Universal VM Template (API-Only Robust Method)
+- name: Create Universal VM Template (Manual Image Upload)
   hosts: all
   connection: local
   gather_facts: false
 
   vars:
-    # Secrets
     pve_password: "{{ PROXMOX_PASSWORD }}"
 
   tasks:
     # --------------------------------------------------------------------------
-    # 0. SETUP & VALIDATION
+    # 0. VALIDATION
     # --------------------------------------------------------------------------
     - name: Validate Required Inputs
       ansible.builtin.debug:
@@ -19,18 +18,21 @@
         check_id: "{{ template_id | mandatory }}"
         check_name: "{{ vm_name | mandatory }}"
         check_node: "{{ target_node | mandatory }}"
-        check_url: "{{ image_url | mandatory }}"
         check_store: "{{ storage | mandatory }}"
         check_pool: "{{ resource_pool | mandatory }}"
+        # New Variable: The exact name of the file you uploaded to Proxmox
+        check_file: "{{ source_filename | mandatory }}" 
 
-    - name: Define Temporary Filename
-      ansible.builtin.set_fact:
-        # We name it .iso so Proxmox accepts it in the 'iso' storage content type.
-        # qemu-img will auto-detect it's actually a qcow2 file during import.
-        temp_image_name: "ansible-import-{{ template_id }}.iso"
+    - name: "Debug: Configuration Review"
+      debug:
+        msg: 
+          - "Target Node:     {{ target_node }}"
+          - "Template ID:     {{ template_id }}"
+          - "Target Storage:  {{ storage }}"
+          - "Source File:     {{ storage }}:iso/{{ source_filename }}"
 
     # --------------------------------------------------------------------------
-    # 1. CLEANUP: Remove old resources
+    # 1. CLEANUP
     # --------------------------------------------------------------------------
     - name: Destroy existing VM/Template (ID {{ template_id }})
       community.proxmox.proxmox_kvm:
@@ -44,42 +46,9 @@
       failed_when: false 
 
     # --------------------------------------------------------------------------
-    # 2. DOWNLOAD: Trigger Proxmox to download the image
+    # 2. CREATE VM & IMPORT EXISTING DISK
     # --------------------------------------------------------------------------
-    - name: Trigger Remote Download (to {{ storage }})
-      ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/download-url"
-        method: POST
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-        body_format: json
-        body:
-          content: "iso"
-          filename: "{{ temp_image_name }}"
-          url: "{{ image_url }}"
-      register: download_task
-      changed_when: true
-
-    - name: Wait for Download to Finish
-      ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ download_task.json.data }}/status"
-        method: GET
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-      register: task_status
-      until: task_status.json.data.status == "stopped"
-      retries: 120 # Wait up to 20 minutes for large downloads
-      delay: 10
-      failed_when: 
-        - task_status.json.data.status == "stopped" 
-        - task_status.json.data.exitstatus != "OK"
-
-    # --------------------------------------------------------------------------
-    # 3. CREATE: Build VM using the local temporary file
-    # --------------------------------------------------------------------------
-    - name: Create VM and Import Disk
+    - name: Create VM and Import from Storage
       community.proxmox.proxmox_kvm:
         api_host: "{{ ansible_host }}"
         api_user: "{{ ansible_user.split('!')[0] }}"
@@ -97,10 +66,10 @@
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
-        # IMPORT: Now we import from the LOCAL file we just downloaded.
+        # KEY CHANGE: Import from the file you uploaded to 'ISO Images'
         # Syntax: STORAGE:iso/FILENAME
         scsi:
-          scsi0: "{{ storage }}:0,import-from={{ storage }}:iso/{{ temp_image_name }},ssd=1,discard=on"
+          scsi0: "{{ storage }}:0,import-from={{ storage }}:iso/{{ source_filename }},ssd=1,discard=on"
         
         ide:
           ide2: "{{ storage }}:cloudinit"
@@ -112,10 +81,10 @@
         hotplug: "disk,network,usb,memory,cpu"
         
         state: present
-        timeout: 600
+        timeout: 300
 
     # --------------------------------------------------------------------------
-    # 4. CLEANUP & FINALIZE
+    # 3. FINALIZE
     # --------------------------------------------------------------------------
     - name: Convert VM {{ template_id }} to Template
       community.proxmox.proxmox_kvm:
@@ -126,13 +95,3 @@
         node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         template: true
-
-    - name: Delete Temporary Image File
-      ansible.builtin.uri:
-        # API Path to delete a file: /nodes/{node}/storage/{storage}/content/{volid}
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:iso/{{ temp_image_name }}"
-        method: DELETE
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-      failed_when: false # Don't fail the playbook if cleanup hiccups
