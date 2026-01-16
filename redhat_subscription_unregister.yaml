@@ -1,0 +1,28 @@
+---
+- name: Unregister Red Hat Systems
+  hosts: all
+  become: yes
+  tasks:
+    - name: Remove Red Hat Subscription
+      community.general.redhat_subscription:
+        state: absent
+      register: rh_unregister_result
+
+    - name: Display Unregistration Result
+      ansible.builtin.debug:
+        msg: >
+          {{ 
+            "System successfully unregistered." 
+            if rh_unregister_result.changed 
+            else "System was not registered or already cleaned." 
+          }}
+
+    - name: Verify Status
+      ansible.builtin.command: subscription-manager status
+      register: rh_status
+      failed_when: false # We expect this to show 'Unknown' or 'Unregistered'
+      changed_when: false
+
+    - name: Show Final Status
+      ansible.builtin.debug:
+        var: rh_status.stdout_lines
