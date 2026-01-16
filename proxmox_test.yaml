@@ -4,20 +4,68 @@
   connection: local
   gather_facts: false
 
-  tasks:
-    - name: Debug Connection Info (Sanity Check)
-      debug:
-        msg: "Connecting to Proxmox Node '{{ pve_node }}' at {{ pve_host }} as {{ pve_user }}"
+  vars:
+    # ---------------------------------------------------------
+    # SECURE PASSWORD HANDLING
+    # ---------------------------------------------------------
+    # We use lookup('env', ...) to grab the value you set in 
+    # the Semaphore "Secrets" tab.
+    # ---------------------------------------------------------
+    pve_password: "{{ lookup('env', 'PROXMOX_PASSWORD') }}"
 
-    - name: Get Proxmox Version
+    # Default SSL check to false (change to true if you have valid certs)
+    pve_verify_ssl: false
+
+  tasks:
+    # ---------------------------------------------------------
+    # 1. Validation Checks
+    # ---------------------------------------------------------
+    - name: Verify Extra Variables are defined
+      assert:
+        that:
+          - pve_host is defined
+          - pve_user is defined
+          - pve_node is defined
+        fail_msg: >-
+          Missing variables! Please check your Semaphore Environment 
+          'Extra Variables' tab. We need: pve_host, pve_user, and pve_node.
+
+    - name: Verify Secret Password is loaded
+      assert:
+        that:
+          - pve_password | length > 0
+        fail_msg: >-
+          Password is missing! Please check your Semaphore Environment 
+          'Secrets' tab. Ensure you added a secret named 'PROXMOX_PASSWORD'.
+
+    # ---------------------------------------------------------
+    # 2. Check Dependencies
+    # ---------------------------------------------------------
+    - name: Check for 'proxmoxer' Python library
+      command: python3 -c "import proxmoxer"
+      changed_when: false
+
+    # ---------------------------------------------------------
+    # 3. Test Connectivity
+    # ---------------------------------------------------------
+    - name: Connect to Proxmox and Get Version
       community.general.proxmox_query:
         api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_password }}"
         node: "{{ pve_node }}"
-        validate_certs: false
+        validate_certs: "{{ pve_verify_ssl }}"
+        query: version
       register: pve_version
 
-    - name: Display Version
+    - name: Success Message
       debug:
-        msg: "Success! Proxmox Version: {{ pve_version.response.version }}"
+        msg: 
+          - "---------------------------------------------------"
+          - " CONNECTION SUCCESSFUL"
+          - "---------------------------------------------------"
+          - " Target Node:    {{ pve_node }} ({{ pve_host }})"
+          - " User:           {{ pve_user }}"
+          - " Proxmox Ver:    {{ pve_version.response.version }}"
+          - " Repo Status:    {{ pve_version.response.repoid }}"
+          - "---------------------------------------------------"
