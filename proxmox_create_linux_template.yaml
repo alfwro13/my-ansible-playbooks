@@ -69,7 +69,7 @@
         # KEY CHANGE: Import from the file you uploaded to 'ISO Images'
         # Syntax: STORAGE:iso/FILENAME
         scsi:
-          scsi0: "{{ storage }}:0,import-from={{ storage }}:iso/{{ source_filename }},ssd=1,discard=on"
+          scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ source_filename }},ssd=1,discard=on"
         
         ide:
           ide2: "{{ storage }}:cloudinit"
