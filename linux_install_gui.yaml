@@ -4,11 +4,11 @@
   become: yes
   gather_facts: yes
 
+  # --- 1. THE GATEKEEPER ---
+  roles:
+    - os_gatekeeper  # Reuses your logic to fail if RHEL is unregistered
+
   vars:
-    # We define a "Marker Package" for each OS. 
-    # If this package is present, we assume the GUI is fully installed.
-    # Debian/Ubuntu: gnome-session is the core session manager.
-    # RHEL/Rocky: gdm is the Gnome Display Manager (standard for Server GUI).
     gui_marker_map:
       Debian: "gnome-session"
       Ubuntu: "ubuntu-desktop" 
@@ -18,41 +18,30 @@
 
   tasks:
     # ---------------------------------------------------------
-    # 1. VERIFICATION: CHECK REAL INSTALLED PACKAGES
+    # 2. VERIFICATION: CHECK REAL INSTALLED PACKAGES
     # ---------------------------------------------------------
-    - name: Gather the package facts (Check what is actually installed)
+    - name: Gather the package facts
       ansible.builtin.package_facts:
         manager: auto
 
-    - name: Check if GUI is already installed (OS Agnostic)
+    - name: Check if GUI is already installed
       ansible.builtin.set_fact:
         gui_is_installed: "{{ gui_marker_map[ansible_distribution] in ansible_facts.packages }}"
-      ignore_errors: yes # Gracefully handle OS detection weirdness
+      when: ansible_distribution in gui_marker_map
 
     - name: Stop if GUI software is already present
-      block:
-        - name: Verify existing GUI
-          ansible.builtin.debug:
-            msg: "GUI Package ({{ gui_marker_map[ansible_distribution] }}) is already installed. Skipping."
-        
-        - name: End play for this host
-          ansible.builtin.meta: end_host
-      when: gui_is_installed | bool
+      ansible.builtin.meta: end_host
+      when: gui_is_installed | default(false) | bool
 
     # ---------------------------------------------------------
-    # 2. SUSE HANDLING (Skip Logic)
+    # 3. SUSE HANDLING
     # ---------------------------------------------------------
-    - name: Handle SUSE Enterprise Linux
-      block:
-        - name: Log SUSE skip
-          ansible.builtin.debug:
-            msg: "SUSE detected. Assuming GUI is managed by system defaults/YaST. Skipping."
-        - name: End play for SUSE
-          ansible.builtin.meta: end_host
+    - name: End play for SUSE
+      ansible.builtin.meta: end_host
       when: ansible_os_family == 'Suse'
 
     # ---------------------------------------------------------
-    # 3. INSTALLATION: DEBIAN FAMILY
+    # 4. INSTALLATION: DEBIAN FAMILY
     # ---------------------------------------------------------
     - name: Update apt cache (Debian/Ubuntu)
       ansible.builtin.apt:
@@ -75,7 +64,7 @@
       when: ansible_distribution == 'Debian'
 
     # ---------------------------------------------------------
-    # 4. INSTALLATION: RHEL FAMILY
+    # 5. INSTALLATION: RHEL FAMILY (RHEL, Rocky, Alma)
     # ---------------------------------------------------------
     - name: Install Desktop Group (RHEL/Rocky/Alma)
       ansible.builtin.dnf:
@@ -85,22 +74,22 @@
       when: ansible_os_family == 'RedHat'
 
     # ---------------------------------------------------------
-    # 5. CONFIGURATION & REBOOT
+    # 6. CONFIGURATION & REBOOT
     # ---------------------------------------------------------
-    # We force the link even if it existed before, because now we KNOW the software is there.
     - name: Ensure boot target is set to graphical
       ansible.builtin.systemd:
         name: graphical.target
-        state: started
         enabled: yes
-        daemon_reload: yes
+        masked: no
+
+    - name: Set default target to graphical
+      ansible.builtin.file:
+        src: /lib/systemd/system/graphical.target
+        dest: /etc/systemd/system/default.target
+        state: link
+        force: yes
 
     - name: Reboot to initialize Desktop Environment
       ansible.builtin.reboot:
-        msg: "Rebooting system to initialize Desktop Environment"
-        connect_timeout: 5
-        reboot_timeout: 600
-        pre_reboot_delay: 5
-      when: >
-        (deb_install is changed) or 
-        (rhel_install is changed)
+        msg: "Rebooting to initialize GUI"
+      when: (deb_install is changed) or (rhel_install is changed)
