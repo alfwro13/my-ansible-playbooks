@@ -5,23 +5,34 @@
   gather_facts: yes
 
   vars:
-    # This is the new display name you want in the GUI
+    # HARDCODED: The actual username you log in with (e.g., 'ansible', 'cloud-user', etc.)
+    target_username: "ansible"
+    
+    # The new "Full Name" you want to see on the Login Screen
     new_display_name: "Ansible"
 
   tasks:
     # --------------------------------------------------------------------------
     # 0. SAFETY CHECK
     # --------------------------------------------------------------------------
-    - name: Verify we are targeting the correct user
-      ansible.builtin.debug:
-        msg: "Updating GECOS/Full Name for user: {{ ansible_user }}"
+    - name: Verify target user exists
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ target_username }}"
+      register: user_check
+      ignore_errors: true
+
+    - name: Fail if user not found
+      ansible.builtin.fail:
+        msg: "User '{{ target_username }}' does not exist on this system!"
+      when: user_check.failed
 
     # --------------------------------------------------------------------------
     # 1. UPDATE USER COMMENT (GECOS)
     # --------------------------------------------------------------------------
     - name: Change user description to '{{ new_display_name }}'
       ansible.builtin.user:
-        name: "{{ ansible_user }}"
+        name: "{{ target_username }}"
         comment: "{{ new_display_name }}"
         # 'state: present' ensures we modify the existing user rather than recreating it
         state: present
@@ -33,11 +44,12 @@
     - name: Verify the change in /etc/passwd
       ansible.builtin.getent:
         database: passwd
-        key: "{{ ansible_user }}"
-      register: check_user
+        key: "{{ target_username }}"
+      register: check_user_final
 
     - name: Display updated user details
       ansible.builtin.debug:
         msg: 
-          - "User: {{ ansible_user }}"
-          - "New Name: {{ check_user.ansible_facts.getent_passwd[ansible_user][4] }}"
+          - "User: {{ target_username }}"
+          - "Old Name: {{ user_check.ansible_facts.getent_passwd[target_username][4] }}"
+          - "New Name: {{ check_user_final.ansible_facts.getent_passwd[target_username][4] }}"
