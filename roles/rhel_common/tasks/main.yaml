@@ -1,0 +1,15 @@
+# roles/rhel_mgmt/tasks/main.yml
+---
+- name: Verify Red Hat Registration
+  block:
+    - name: Get subscription identity
+      ansible.builtin.command: subscription-manager identity
+      register: rh_identity
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if Red Hat is not registered
+      ansible.builtin.fail:
+        msg: "System is Red Hat but NO System ID found. Please register."
+      when: rh_identity.rc != 0
+  when: ansible_distribution == "RedHat"
