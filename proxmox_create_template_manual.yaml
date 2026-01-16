@@ -103,15 +103,27 @@
           numa: 1
       changed_when: true
 
-    # --------------------------------------------------------------------------
-    # 4. FINALIZE
-    # --------------------------------------------------------------------------
-    - name: Convert VM {{ template_id }} to Template
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        template: true
+    # ==========================================================================
+    # 4. CONFIGURATION FIXES (NUMA & TEMPLATE)
+    # ==========================================================================
+    - name: Enable NUMA (API Direct)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+        body_format: json
+        body:
+          numa: 1
+      changed_when: true
+
+    - name: Convert to Template (API Direct)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/template"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+      register: template_convert
+      changed_when: true
