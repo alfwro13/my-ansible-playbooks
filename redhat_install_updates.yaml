@@ -1,0 +1,33 @@
+---
+- name: OS-Specific Update Management
+  hosts: all
+  become: yes
+  tasks:
+    # --- RED HAT LOGIC ---
+    - name: Handle Red Hat Registration and Updates
+      block:
+        - name: Check registration status
+          ansible.builtin.command: subscription-manager status
+          register: rh_status
+          changed_when: false
+          failed_when: false
+
+        - name: Fail if Red Hat is not registered
+          ansible.builtin.fail:
+            msg: "System is Red Hat but NOT registered. Please register before updating."
+          when: "'Overall Status: Current' not in rh_status.stdout"
+
+        - name: Install all updates for Red Hat
+          ansible.builtin.dnf:
+            name: "*"
+            state: latest
+      when: ansible_os_family == "RedHat" and ansible_distribution == "RedHat"
+
+    # --- ROCKY / CENTOS LOGIC ---
+    - name: Update Rocky or CentOS Systems
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: 
+        - ansible_os_family == "RedHat"
+        - ansible_distribution in ["Rocky", "CentOS"]
