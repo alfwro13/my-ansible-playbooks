@@ -1,0 +1,29 @@
+---
+- name: Install Proxmox Guest Agent
+  hosts: all
+  become: yes
+  
+  roles:
+    - os_gatekeeper  # Ensures RHEL is registered before we try to fetch packages
+
+  tasks:
+    - name: Install qemu-guest-agent
+      ansible.builtin.dnf:
+        name: qemu-guest-agent
+        state: present
+
+    - name: Ensure qemu-guest-agent is started and enabled
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        state: started
+        enabled: yes
+
+    - name: Verify agent is running
+      ansible.builtin.command: systemctl is-active qemu-guest-agent
+      register: agent_status
+      changed_when: false
+      failed_when: agent_status.rc != 0
+
+    - name: Final Summary
+      ansible.builtin.debug:
+        msg: "Proxmox Agent is installed and active on {{ ansible_hostname }}"
