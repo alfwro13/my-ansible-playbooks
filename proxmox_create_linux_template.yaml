@@ -1,5 +1,5 @@
 ---
-- name: Create Universal VM Template (API Direct)
+- name: Create Universal VM Template (API-Only Robust Method)
   hosts: all
   connection: local
   gather_facts: false
@@ -10,7 +10,7 @@
 
   tasks:
     # --------------------------------------------------------------------------
-    # 0. SETUP: Detect Node & Validate Inputs
+    # 0. SETUP & VALIDATION
     # --------------------------------------------------------------------------
     - name: Validate Required Inputs
       ansible.builtin.debug:
@@ -23,15 +23,14 @@
         check_store: "{{ storage | mandatory }}"
         check_pool: "{{ resource_pool | mandatory }}"
 
-    - name: "Debug: Configuration Review"
-      debug:
-        msg: 
-          - "Target Node:    {{ target_node }}"
-          - "Template ID:    {{ template_id }}"
-          - "Image URL:      {{ image_url }}"
+    - name: Define Temporary Filename
+      ansible.builtin.set_fact:
+        # We name it .iso so Proxmox accepts it in the 'iso' storage content type.
+        # qemu-img will auto-detect it's actually a qcow2 file during import.
+        temp_image_name: "ansible-import-{{ template_id }}.iso"
 
     # --------------------------------------------------------------------------
-    # 1. CLEANUP: Destroy any existing VM (Using Module)
+    # 1. CLEANUP: Remove old resources
     # --------------------------------------------------------------------------
     - name: Destroy existing VM/Template (ID {{ template_id }})
       community.proxmox.proxmox_kvm:
@@ -45,61 +44,78 @@
       failed_when: false 
 
     # --------------------------------------------------------------------------
-    # 2. CREATE: Direct API Call (Bypassing Module Limits)
+    # 2. DOWNLOAD: Trigger Proxmox to download the image
     # --------------------------------------------------------------------------
-    - name: Create VM and Trigger Disk Import (Direct API)
+    - name: Trigger Remote Download (to {{ storage }})
       ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu"
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/download-url"
         method: POST
         validate_certs: false
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
         body_format: json
         body:
-          vmid: "{{ template_id }}"
-          name: "{{ vm_name }}"
-          pool: "{{ resource_pool }}"
-          memory: "{{ vm_memory | default(2048) }}"
-          cores: "{{ vm_cores | default(2) }}"
-          net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
-          scsihw: "virtio-scsi-pci"
-          ostype: "l26"
-          
-          # DIRECT URL IMPORT:
-          # We send this as a raw string. Proxmox handles the parsing, not Ansible.
-          scsi0: "{{ storage }}:0,import-from={{ image_url }},ssd=1,discard=on"
-          ide2: "{{ storage }}:cloudinit"
-          boot: "order=scsi0"
-          
-          # Advanced
-          agent: "1,fstrim_cloned_disks=1"
-          hotplug: "disk,network,usb,memory,cpu"
-          vga: "std"
-          
-      register: create_task
+          content: "iso"
+          filename: "{{ temp_image_name }}"
+          url: "{{ image_url }}"
+      register: download_task
       changed_when: true
 
-    # --------------------------------------------------------------------------
-    # 3. MONITORING: Wait for the Download/Import to Finish
-    # --------------------------------------------------------------------------
-    - name: Wait for VM Creation and Disk Download
+    - name: Wait for Download to Finish
       ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ create_task.json.data }}/status"
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ download_task.json.data }}/status"
         method: GET
         validate_certs: false
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
       register: task_status
-      # Check every 10 seconds, up to 10 minutes (60 retries)
       until: task_status.json.data.status == "stopped"
-      retries: 60
+      retries: 120 # Wait up to 20 minutes for large downloads
       delay: 10
       failed_when: 
         - task_status.json.data.status == "stopped" 
         - task_status.json.data.exitstatus != "OK"
 
     # --------------------------------------------------------------------------
-    # 4. FINALIZE: Convert to Template
+    # 3. CREATE: Build VM using the local temporary file
+    # --------------------------------------------------------------------------
+    - name: Create VM and Import Disk
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ target_node }}"
+        vmid: "{{ template_id }}"
+        name: "{{ vm_name }}"
+        pool: "{{ resource_pool }}"
+        
+        # Hardware
+        memory: "{{ vm_memory | default(2048) }}"
+        cores: "{{ vm_cores | default(2) }}"
+        net:
+          net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
+        scsihw: virtio-scsi-pci
+        
+        # IMPORT: Now we import from the LOCAL file we just downloaded.
+        # Syntax: STORAGE:iso/FILENAME
+        scsi:
+          scsi0: "{{ storage }}:0,import-from={{ storage }}:iso/{{ temp_image_name }},ssd=1,discard=on"
+        
+        ide:
+          ide2: "{{ storage }}:cloudinit"
+        boot: "order=scsi0"
+        
+        ostype: l26
+        vga: std
+        agent: "enabled=1,fstrim_cloned_disks=1"
+        hotplug: "disk,network,usb,memory,cpu"
+        
+        state: present
+        timeout: 600
+
+    # --------------------------------------------------------------------------
+    # 4. CLEANUP & FINALIZE
     # --------------------------------------------------------------------------
     - name: Convert VM {{ template_id }} to Template
       community.proxmox.proxmox_kvm:
@@ -110,3 +126,13 @@
         node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         template: true
+
+    - name: Delete Temporary Image File
+      ansible.builtin.uri:
+        # API Path to delete a file: /nodes/{node}/storage/{storage}/content/{volid}
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:iso/{{ temp_image_name }}"
+        method: DELETE
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+      failed_when: false # Don't fail the playbook if cleanup hiccups
