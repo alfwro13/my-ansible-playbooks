@@ -5,7 +5,7 @@
   gather_facts: false
 
   vars:
-    pve_password: "{{ lookup('env', 'PROXMOX_PASSWORD') }}"
+    pve_password: "{{ PROXMOX_PASSWORD }}"
 
 #proxmoxer installed via apt install python3-proxmoxer python3-requests for system wide availability
 
