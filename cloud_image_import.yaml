@@ -1,5 +1,5 @@
 ---
-- name: Cloud Image Import (Download & Create)
+- name: Proxmox - Import Cloud Image Only
   hosts: all
   connection: local
   gather_facts: false
@@ -15,46 +15,25 @@
       ansible.builtin.debug:
         msg: "Validating inputs..."
       vars:
-        check_id: "{{ template_id | mandatory }}"
-        check_name: "{{ vm_name | mandatory }}"
         check_node: "{{ target_node | mandatory }}"
         check_store: "{{ storage | mandatory }}"
-        check_pool: "{{ resource_pool | mandatory }}"
         check_url: "{{ image_url | mandatory }}"
-
-    - name: Define Temporary Filename
-      ansible.builtin.set_fact:
-        # We rename it to .iso so Proxmox storage accepts it easily.
-        # Proxmox is smart enough to detect it's actually qcow2 inside.
-        temp_image_name: "auto-download-{{ template_id }}.iso"
+        check_name: "{{ image_filename | mandatory }}"
 
     - name: "Debug: Configuration Review"
       debug:
         msg: 
           - "Target Node:     {{ target_node }}"
-          - "Image URL:       {{ image_url }}"
-          - "Temp Filename:   {{ temp_image_name }}"
+          - "Target Storage:  {{ storage }}"
+          - "Download URL:    {{ image_url }}"
+          - "Save As:         {{ image_filename }}"
 
     # --------------------------------------------------------------------------
-    # 1. CLEANUP (Old VM)
-    # --------------------------------------------------------------------------
-    - name: Destroy existing VM/Template (ID {{ template_id }})
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        state: absent
-      failed_when: false 
-
-    # --------------------------------------------------------------------------
-    # 2. DOWNLOAD IMAGE (API)
+    # 1. DOWNLOAD IMAGE (API)
     # --------------------------------------------------------------------------
     - name: Trigger Remote Download (to {{ storage }})
       ansible.builtin.uri:
-        # This API endpoint forces Proxmox to download the file
+        # API: /nodes/{node}/storage/{storage}/download-url
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/download-url"
         method: POST
         validate_certs: false
@@ -62,12 +41,15 @@
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
         body_format: json
         body:
-          content: "iso"
-          filename: "{{ temp_image_name }}"
+          content: "iso" # 'iso' is the standard content type for image files in this API
+          filename: "{{ image_filename }}"
           url: "{{ image_url }}"
       register: download_task
       changed_when: true
 
+    # --------------------------------------------------------------------------
+    # 2. MONITOR DOWNLOAD
+    # --------------------------------------------------------------------------
     - name: Wait for Download to Finish
       ansible.builtin.uri:
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ download_task.json.data }}/status"
@@ -76,7 +58,7 @@
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
       register: task_status
-      # Check status every 10s, wait up to 20 minutes (120 * 10s)
+      # Check status every 10s, wait up to 20 minutes
       until: task_status.json.data.status == "stopped"
       retries: 120
       delay: 10
@@ -84,76 +66,6 @@
         - task_status.json.data.status == "stopped" 
         - task_status.json.data.exitstatus != "OK"
 
-    # --------------------------------------------------------------------------
-    # 3. CREATE VM (From Local File)
-    # --------------------------------------------------------------------------
-    - name: Create VM and Import Downloaded Disk
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        name: "{{ vm_name }}"
-        pool: "{{ resource_pool }}"
-        
-        memory: "{{ vm_memory | default(2048) }}"
-        cores: "{{ vm_cores | default(2) }}"
-        cpu: host
-        net:
-          net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
-        scsihw: virtio-scsi-pci
-        
-        # IMPORT: We import the file we just downloaded
-        scsi:
-          scsi0: "{{ storage }}:0,import-from={{ storage }}:iso/{{ temp_image_name }},ssd=1,discard=on"
-        
-        ide:
-          ide2: "{{ storage }}:cloudinit"
-        boot: "order=scsi0"
-        
-        ostype: l26
-        vga: std
-        agent: "enabled=1,fstrim_cloned_disks=1"
-        hotplug: "disk,network,usb,memory,cpu"
-        
-        state: present
-        timeout: 300
-
-    # --------------------------------------------------------------------------
-    # 4. FIXES & FINALIZE
-    # --------------------------------------------------------------------------
-    - name: Enable NUMA (API Workaround)
-      ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
-        method: POST
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-        body_format: json
-        body:
-          numa: 1
-      changed_when: true
-
-    - name: Convert VM {{ template_id }} to Template
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        template: true
-
-    # --------------------------------------------------------------------------
-    # 5. CLEANUP TEMP FILE
-    # --------------------------------------------------------------------------
-    - name: Delete Temporary ISO
-      ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:iso/{{ temp_image_name }}"
-        method: DELETE
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-      failed_when: false
+    - name: Report Success
+      ansible.builtin.debug:
+        msg: "Image successfully downloaded to {{ storage }}:iso/{{ image_filename }}"
