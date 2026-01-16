@@ -1,0 +1,43 @@
+---
+- name: Update Ansible User Display Name
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # This is the new display name you want in the GUI
+    new_display_name: "Ansible"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0. SAFETY CHECK
+    # --------------------------------------------------------------------------
+    - name: Verify we are targeting the correct user
+      ansible.builtin.debug:
+        msg: "Updating GECOS/Full Name for user: {{ ansible_user }}"
+
+    # --------------------------------------------------------------------------
+    # 1. UPDATE USER COMMENT (GECOS)
+    # --------------------------------------------------------------------------
+    - name: Change user description to '{{ new_display_name }}'
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        comment: "{{ new_display_name }}"
+        # 'state: present' ensures we modify the existing user rather than recreating it
+        state: present
+      register: user_update
+
+    # --------------------------------------------------------------------------
+    # 2. VERIFICATION
+    # --------------------------------------------------------------------------
+    - name: Verify the change in /etc/passwd
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_user }}"
+      register: check_user
+
+    - name: Display updated user details
+      ansible.builtin.debug:
+        msg: 
+          - "User: {{ ansible_user }}"
+          - "New Name: {{ check_user.ansible_facts.getent_passwd[ansible_user][4] }}"
