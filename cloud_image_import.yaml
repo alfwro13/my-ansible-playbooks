@@ -68,4 +68,4 @@
 
     - name: Report Success
       ansible.builtin.debug:
-        msg: "Image successfully downloaded to {{ storage }}:iso/{{ image_filename }}"
+        msg: "Image successfully downloaded to {{ storage }}:import/{{ image_filename }}"
