@@ -25,6 +25,7 @@
         activationkey: "{{ rh_activation_key }}"
         # Auto-attach ensures the system gets a valid pool immediately
        #auto_attach: true
+      register: rh_register_result
 
     # --------------------------------------------------------------------------
     # 2. VERIFY REGISTRATION
