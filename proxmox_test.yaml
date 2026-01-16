@@ -20,7 +20,7 @@
           - "Using IP: {{ ansible_host }}"
           - "Using User: {{ ansible_user }}"
 
-  - name: Connect to Proxmox and Get Node Info
+    - name: Connect to Proxmox and Get Node Info
       community.proxmox.proxmox_node_info:
         api_host: "{{ ansible_host }}"
         api_user: "{{ ansible_user }}"
