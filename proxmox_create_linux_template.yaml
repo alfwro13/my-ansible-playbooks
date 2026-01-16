@@ -61,14 +61,14 @@
         name: "{{ vm_name }}"
         pool: "{{ resource_pool }}"
         
-        # Hardware Configuration (These can have safe defaults, or be survey vars too)
+        # Hardware Configuration
         memory: "{{ vm_memory | default(2048) }}"
         cores: "{{ vm_cores | default(2) }}"
         net:
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
-        # DISK IMPORT: Fetches URL directly to the specified storage
+        # DISK IMPORT
         scsi:
           scsi0: "{{ storage }}:0,import-from={{ image_url }},ssd=1,discard=on"
         
@@ -84,10 +84,11 @@
         vga: std
         agent: "enabled=1,fstrim_cloned_disks=1"
         hotplug: "disk,network,usb,memory,cpu"
-        numa: true
+        
+        # REMOVED 'numa: true' to fix type error
         
         state: present
-        timeout: 600 # Wait for download to finish
+        timeout: 600
 
     # --------------------------------------------------------------------------
     # 3. FINALIZE: Convert the VM to a Template
