@@ -1,0 +1,117 @@
+---
+- name: Create Universal VM Template (Manual File - Absolute Path)
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  vars:
+    pve_password: "{{ PROXMOX_PASSWORD }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0. VALIDATION
+    # --------------------------------------------------------------------------
+    - name: Validate Required Inputs
+      ansible.builtin.debug:
+        msg: "Validating inputs..."
+      vars:
+        check_id: "{{ template_id | mandatory }}"
+        check_name: "{{ vm_name | mandatory }}"
+        check_node: "{{ target_node | mandatory }}"
+        check_store: "{{ storage | mandatory }}"
+        check_pool: "{{ resource_pool | mandatory }}"
+        check_file: "{{ source_filename | mandatory }}"
+
+    - name: "Debug: Configuration Review"
+      debug:
+        msg: 
+          - "Target Node:     {{ target_node }}"
+          - "Template ID:     {{ template_id }}"
+          - "CPU Type:        host"
+          - "NUMA:            Enabled"
+          - "Importing from:  {{ storage }}:import/{{ source_filename }}"
+
+    # --------------------------------------------------------------------------
+    # 1. CLEANUP
+    # --------------------------------------------------------------------------
+    - name: Destroy existing VM/Template (ID {{ template_id }})
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ target_node }}"
+        vmid: "{{ template_id }}"
+        state: absent
+      failed_when: false 
+
+    # --------------------------------------------------------------------------
+    # 2. CREATE VM & IMPORT DISK
+    # --------------------------------------------------------------------------
+    - name: Create VM and Import from Storage
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ target_node }}"
+        vmid: "{{ template_id }}"
+        name: "{{ vm_name }}"
+        pool: "{{ resource_pool }}"
+        
+        # Hardware
+        memory: "{{ vm_memory | default(2048) }}"
+        cores: "{{ vm_cores | default(2) }}"
+        # NEW: Set CPU Type to 'host' for best performance
+        cpu: host
+        
+        net:
+          net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
+        scsihw: virtio-scsi-pci
+        
+        # Import from the manually uploaded file
+        scsi:
+          scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ source_filename }},ssd=1,discard=on"
+        
+        ide:
+          ide2: "{{ storage }}:cloudinit"
+        boot: "order=scsi0"
+        
+        ostype: l26
+        vga: std
+        agent: "enabled=1,fstrim_cloned_disks=1"
+        hotplug: "disk,network,usb,memory,cpu"
+        
+        # Note: We intentionally skip 'numa: true' here to avoid the module crash.
+        # We enable it in the next task via API.
+        
+        state: present
+        timeout: 300
+
+    # --------------------------------------------------------------------------
+    # 3. CONFIGURATION FIXES (API)
+    # --------------------------------------------------------------------------
+    - name: Enable NUMA (API Workaround)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+        body_format: json
+        body:
+          numa: 1
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. FINALIZE
+    # --------------------------------------------------------------------------
+    - name: Convert VM {{ template_id }} to Template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ target_node }}"
+        vmid: "{{ template_id }}"
+        template: true
