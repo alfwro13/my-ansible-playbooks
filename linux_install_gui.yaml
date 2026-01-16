@@ -1,12 +1,11 @@
 ---
-- name: Install Default GUI (Universal & Verification Based)
+- name: Install Default GUI (Universal)
   hosts: all
   become: yes
   gather_facts: yes
 
-  # --- 1. THE GATEKEEPER ---
   roles:
-    - os_gatekeeper  # Reuses your logic to fail if RHEL is unregistered
+    - os_gatekeeper  # Still ensures RHEL is registered first
 
   vars:
     gui_marker_map:
@@ -15,83 +14,84 @@
       RedHat: "gdm"
       Rocky: "gdm"
       AlmaLinux: "gdm"
+      SLES: "gnome-session"
+      openSUSE: "gnome-session"
 
   tasks:
     # ---------------------------------------------------------
-    # 2. VERIFICATION: CHECK REAL INSTALLED PACKAGES
+    # 1. VERIFICATION: CHECK SOFTWARE & BOOT TARGET
     # ---------------------------------------------------------
     - name: Gather the package facts
       ansible.builtin.package_facts:
         manager: auto
 
-    - name: Check if GUI is already installed
+    - name: Check current boot target
+      ansible.builtin.command: systemctl get-default
+      register: current_target
+      changed_when: false
+
+    - name: Determine if GUI is fully ready
       ansible.builtin.set_fact:
-        gui_is_installed: "{{ gui_marker_map[ansible_distribution] in ansible_facts.packages }}"
-      when: ansible_distribution in gui_marker_map
+        gui_fully_configured: >-
+          {{ 
+            (ansible_distribution in gui_marker_map and gui_marker_map[ansible_distribution] in ansible_facts.packages) and 
+            (current_target.stdout == 'graphical.target') 
+          }}
 
-    - name: Stop if GUI software is already present
+    - name: Stop if GUI software is present AND target is graphical
       ansible.builtin.meta: end_host
-      when: gui_is_installed | default(false) | bool
+      when: gui_fully_configured | default(false) | bool
 
     # ---------------------------------------------------------
-    # 3. SUSE HANDLING
+    # 2. INSTALLATION: DEBIAN/UBUNTU
     # ---------------------------------------------------------
-    - name: End play for SUSE
-      ansible.builtin.meta: end_host
-      when: ansible_os_family == 'Suse'
-
-    # ---------------------------------------------------------
-    # 4. INSTALLATION: DEBIAN FAMILY
-    # ---------------------------------------------------------
-    - name: Update apt cache (Debian/Ubuntu)
+    - name: Install Desktop (Ubuntu/Debian)
       ansible.builtin.apt:
-        update_cache: yes
-        cache_valid_time: 3600
+        name: "{{ 'ubuntu-desktop' if ansible_distribution == 'Ubuntu' else 'task-gnome-desktop' }}"
+        state: present
+      register: deb_install
       when: ansible_os_family == 'Debian'
 
-    - name: Install Desktop Environment (Ubuntu)
-      ansible.builtin.apt:
-        name: ubuntu-desktop
-        state: present
-      register: deb_install
-      when: ansible_distribution == 'Ubuntu'
-
-    - name: Install Desktop Environment (Debian)
-      ansible.builtin.apt:
-        name: task-gnome-desktop
-        state: present
-      register: deb_install
-      when: ansible_distribution == 'Debian'
-
     # ---------------------------------------------------------
-    # 5. INSTALLATION: RHEL FAMILY (RHEL, Rocky, Alma)
+    # 3. INSTALLATION: RHEL FAMILY
     # ---------------------------------------------------------
-    - name: Install Desktop Group (RHEL/Rocky/Alma)
+    - name: Install Desktop Group (RHEL Family)
       ansible.builtin.dnf:
         name: "@Server with GUI"
         state: present
       register: rhel_install
       when: ansible_os_family == 'RedHat'
 
-# ---------------------------------------------------------
-    # 6. CONFIGURATION & REBOOT
+    # ---------------------------------------------------------
+    # 4. INSTALLATION: SUSE FAMILY
+    # ---------------------------------------------------------
+    - name: Install Gnome Pattern (SUSE)
+      community.general.zypper:
+        name: 'patterns-gnome-gnome_basic'
+        type: pattern
+        state: present
+      register: suse_install
+      when: ansible_os_family == 'Suse'
+
+    # ---------------------------------------------------------
+    # 5. CONFIGURATION & REBOOT
     # ---------------------------------------------------------
     - name: Set default boot target to graphical
       ansible.builtin.command: systemctl set-default graphical.target
-      register: target_result
-      changed_when: "'Removed' in target_result.stderr or 'Created' in target_result.stderr"
+      register: target_change
+      changed_when: current_target.stdout != 'graphical.target'
 
-    - name: Ensure graphical target is active now
+    - name: Ensure graphical target is active
       ansible.builtin.systemd:
         name: graphical.target
         state: started
         enabled: yes
 
-    - name: Reboot to initialize Desktop Environment
+    - name: Reboot if changes were made
       ansible.builtin.reboot:
-        msg: "Rebooting to initialize GUI"
-      # Reboot if software was installed OR if we just changed the boot target
+        msg: "Applying graphical interface changes."
       when: >
         (deb_install is changed) or 
-        (rhel_install is changed) or
-        (target_result is changed)
+        (rhel_install is changed) or 
+        (suse_install is changed) or
+        (target_change is changed)
