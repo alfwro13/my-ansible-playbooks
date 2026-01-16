@@ -2,31 +2,13 @@
 - name: OS-Specific Update Management
   hosts: all
   become: yes
+  
+  roles:
+    - os_gatekeeper  
   tasks:
-    # --- RED HAT LOGIC ---
-    - name: Handle Red Hat Registration and Updates
-      block:
-        - name: Get subscription identity
-          ansible.builtin.command: subscription-manager identity
-          register: rh_identity
-          changed_when: false
-          failed_when: false
-
-        - name: Fail if Red Hat is not registered
-          ansible.builtin.fail:
-            msg: "System is Red Hat but NO System ID found. Please register."
-          # If the command returns 'container' or 'not yet registered', rc will be non-zero
-          when: rh_identity.rc != 0
-
-        - name: Install all updates for Red Hat
-          ansible.builtin.dnf:
-            name: "*"
-            state: latest
-      when: ansible_distribution == "RedHat"
-
-    # --- ROCKY / CENTOS LOGIC ---
-    - name: Update Rocky or CentOS Systems
+    - name: Install all updates (DNF)
       ansible.builtin.dnf:
         name: "*"
         state: latest
-      when: ansible_distribution in ["Rocky", "CentOS"]
+      # This runs for RHEL (if it passed the role) and Rocky/CentOS automatically
+      when: ansible_os_family == "RedHat"
