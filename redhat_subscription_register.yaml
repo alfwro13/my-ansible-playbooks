@@ -25,3 +25,20 @@
         activationkey: "{{ rh_activation_key }}"
         # Auto-attach ensures the system gets a valid pool immediately
        #auto_attach: true
+
+    # --------------------------------------------------------------------------
+    # 2. VERIFY REGISTRATION
+    # --------------------------------------------------------------------------
+    - name: Check Subscription Identity
+      ansible.builtin.command: subscription-manager identity
+      register: sub_identity
+      changed_when: false
+      # If this command returns non-zero, the system is NOT registered properly
+      failed_when: sub_identity.rc != 0
+
+    - name: Display Registration Details
+      ansible.builtin.debug:
+        msg: 
+          - "Registration Result: {{ 'Changed' if rh_register_result.changed else 'Already Registered' }}"
+          - "---------------------------------------------------"
+          - "{{ sub_identity.stdout_lines }}"
