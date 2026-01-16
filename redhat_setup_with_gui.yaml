@@ -5,6 +5,8 @@
 
 - import_playbook: redhat_subscription_register.yaml
 
+- import_playbook: linux_create_user_account.yaml
+
 - import_playbook: linux_update_ansible_user_display_name.yaml
 
 - import_playbook: redhat_install_proxmox_agent.yaml
