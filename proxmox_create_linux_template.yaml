@@ -1,0 +1,103 @@
+---
+- name: Create Universal VM Template (Proxmox API)
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Secrets (Mapped automatically from Semaphore Environment)
+    pve_password: "{{ PROXMOX_PASSWORD }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0. VALIDATION: Ensure all required variables are present
+    # --------------------------------------------------------------------------
+    - name: Validate Required Inputs
+      ansible.builtin.debug:
+        msg: "Validating inputs..."
+      vars:
+        # The '| mandatory' filter stops execution immediately if the var is missing
+        check_id: "{{ template_id | mandatory }}"
+        check_name: "{{ vm_name | mandatory }}"
+        check_url: "{{ image_url | mandatory }}"
+        check_store: "{{ storage | mandatory }}"
+        check_pool: "{{ resource_pool | mandatory }}"
+
+    - name: "Debug: Configuration Review"
+      debug:
+        msg: 
+          - "Target Node: {{ inventory_hostname }}"
+          - "Template ID: {{ template_id }}"
+          - "VM Name:     {{ vm_name }}"
+          - "Image URL:   {{ image_url }}"
+          - "Storage:     {{ storage }}"
+          - "Pool:        {{ resource_pool }}"
+
+    # --------------------------------------------------------------------------
+    # 1. CLEANUP: Destroy any existing VM/Template with this ID
+    # --------------------------------------------------------------------------
+    - name: Destroy existing VM/Template (ID {{ template_id }})
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ template_id }}"
+        state: absent
+      failed_when: false # Gracefully handle case where it doesn't exist yet
+
+    # --------------------------------------------------------------------------
+    # 2. CREATE: Build VM and Download Disk via API
+    # --------------------------------------------------------------------------
+    - name: Create VM and Import Disk from URL
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ template_id }}"
+        name: "{{ vm_name }}"
+        pool: "{{ resource_pool }}"
+        
+        # Hardware Configuration (These can have safe defaults, or be survey vars too)
+        memory: "{{ vm_memory | default(2048) }}"
+        cores: "{{ vm_cores | default(2) }}"
+        net:
+          net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
+        scsihw: virtio-scsi-pci
+        
+        # DISK IMPORT: Fetches URL directly to the specified storage
+        scsi:
+          scsi0: "{{ storage }}:0,import-from={{ image_url }},ssd=1,discard=on"
+        
+        # CLOUD-INIT
+        ide:
+          ide2: "{{ storage }}:cloudinit"
+        
+        # BOOT CONFIG
+        boot: "order=scsi0"
+        
+        # ADVANCED SETTINGS
+        ostype: l26
+        vga: std
+        agent: "enabled=1,fstrim_cloned_disks=1"
+        hotplug: "disk,network,usb,memory,cpu"
+        numa: true
+        
+        state: present
+        timeout: 600 # Wait for download to finish
+
+    # --------------------------------------------------------------------------
+    # 3. FINALIZE: Convert the VM to a Template
+    # --------------------------------------------------------------------------
+    - name: Convert VM {{ template_id }} to Template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ ansible_host }}"
+        api_user: "{{ ansible_user.split('!')[0] }}"
+        api_token_id: "{{ ansible_user.split('!')[1] }}"
+        api_token_secret: "{{ pve_password }}"
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ template_id }}"
+        template: true
