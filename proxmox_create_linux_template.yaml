@@ -1,5 +1,5 @@
 ---
-- name: Create Universal VM Template (Manual Image Upload)
+- name: Create Universal VM Template (Manual File - Absolute Path)
   hosts: all
   connection: local
   gather_facts: false
@@ -20,16 +20,16 @@
         check_node: "{{ target_node | mandatory }}"
         check_store: "{{ storage | mandatory }}"
         check_pool: "{{ resource_pool | mandatory }}"
-        # New Variable: The exact name of the file you uploaded to Proxmox
-        check_file: "{{ source_filename | mandatory }}" 
+        check_file: "{{ source_filename | mandatory }}"
 
     - name: "Debug: Configuration Review"
       debug:
         msg: 
           - "Target Node:     {{ target_node }}"
           - "Template ID:     {{ template_id }}"
-          - "Target Storage:  {{ storage }}"
-          - "Source File:     {{ storage }}:iso/{{ source_filename }}"
+          - "CPU Type:        host"
+          - "NUMA:            Enabled"
+          - "Importing from:  {{ storage }}:import/{{ source_filename }}"
 
     # --------------------------------------------------------------------------
     # 1. CLEANUP
@@ -46,7 +46,7 @@
       failed_when: false 
 
     # --------------------------------------------------------------------------
-    # 2. CREATE VM & IMPORT EXISTING DISK
+    # 2. CREATE VM & IMPORT DISK
     # --------------------------------------------------------------------------
     - name: Create VM and Import from Storage
       community.proxmox.proxmox_kvm:
@@ -62,12 +62,14 @@
         # Hardware
         memory: "{{ vm_memory | default(2048) }}"
         cores: "{{ vm_cores | default(2) }}"
+        # NEW: Set CPU Type to 'host' for best performance
+        cpu: host
+        
         net:
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
-        # KEY CHANGE: Import from the file you uploaded to 'ISO Images'
-        # Syntax: STORAGE:iso/FILENAME
+        # Import from the manually uploaded file
         scsi:
           scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ source_filename }},ssd=1,discard=on"
         
@@ -80,11 +82,29 @@
         agent: "enabled=1,fstrim_cloned_disks=1"
         hotplug: "disk,network,usb,memory,cpu"
         
+        # Note: We intentionally skip 'numa: true' here to avoid the module crash.
+        # We enable it in the next task via API.
+        
         state: present
         timeout: 300
 
     # --------------------------------------------------------------------------
-    # 3. FINALIZE
+    # 3. CONFIGURATION FIXES (API)
+    # --------------------------------------------------------------------------
+    - name: Enable NUMA (API Workaround)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+        body_format: json
+        body:
+          numa: 1
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. FINALIZE
     # --------------------------------------------------------------------------
     - name: Convert VM {{ template_id }} to Template
       community.proxmox.proxmox_kvm:
