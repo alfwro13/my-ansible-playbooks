@@ -1,6 +1,5 @@
 ---
-- name: Create Universal VM Template (Manual File - Absolute Path)
-  hosts: all
+- name: Create Universal VM Template from Manual Upload
   connection: local
   gather_facts: false
 
@@ -27,8 +26,6 @@
         msg: 
           - "Target Node:     {{ target_node }}"
           - "Template ID:     {{ template_id }}"
-          - "CPU Type:        host"
-          - "NUMA:            Enabled"
           - "Importing from:  {{ storage }}:import/{{ source_filename }}"
 
     # --------------------------------------------------------------------------
@@ -46,78 +43,69 @@
       failed_when: false 
 
     # --------------------------------------------------------------------------
-    # 2. CREATE VM & IMPORT DISK
+    # 2. CREATE VM (DIRECT API - CATCHES ERRORS)
     # --------------------------------------------------------------------------
-    - name: Create VM and Import from Storage
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        name: "{{ vm_name }}"
-        pool: "{{ resource_pool }}"
-        
-        # Hardware
-        memory: "{{ vm_memory | default(2048) }}"
-        cores: "{{ vm_cores | default(2) }}"
-        # NEW: Set CPU Type to 'host' for best performance
-        cpu: host
-        
-        net:
+    - name: Create VM and Trigger Import (API)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+        body_format: json
+        body:
+          vmid: "{{ template_id }}"
+          name: "{{ vm_name }}"
+          pool: "{{ resource_pool }}"
+          
+          # Hardware Config
+          memory: "{{ vm_memory | default(2048) }}"
+          cores: "{{ vm_cores | default(2) }}"
+          cpu: host
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
-        scsihw: virtio-scsi-pci
-        
-        # Import from the manually uploaded file
-        scsi:
+          scsihw: virtio-scsi-pci
+          
+          # IMPORT - This will fail instantly if filename is wrong
           scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ source_filename }},ssd=1,discard=on"
-        
-        ide:
+          
           ide2: "{{ storage }}:cloudinit"
-        boot: "order=scsi0"
-        
-        ostype: l26
-        vga: std
-        agent: "enabled=1,fstrim_cloned_disks=1"
-        hotplug: "disk,network,usb,memory,cpu"
-        
-        # Note: We intentionally skip 'numa: true' here to avoid the module crash.
-        # We enable it in the next task via API.
-        
-        state: present
-        timeout: 300
+          boot: "order=scsi0"
+          ostype: l26
+          vga: std
+          agent: "enabled=1,fstrim_cloned_disks=1"
+          hotplug: "disk,network,usb,memory,cpu"
+          
+          # We can enable NUMA right here in the creation call!
+          # (The API accepts integers for boolean-like flags safely)
+          numa: 1
+          
+      register: create_task
+      changed_when: true
 
     # --------------------------------------------------------------------------
-    # 3. CONFIGURATION FIXES (API)
+    # 3. MONITOR CREATION (FAIL FAST ON TYPO)
     # --------------------------------------------------------------------------
-    - name: Enable NUMA (API Workaround)
+    - name: Wait for VM Creation / Catch Import Errors
       ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
-        method: POST
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ create_task.json.data }}/status"
+        method: GET
         validate_certs: false
         headers:
           Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-        body_format: json
-        body:
-          numa: 1
-      changed_when: true
+      register: task_status
+      # Keep checking until the task stops running
+      until: task_status.json.data.status == "stopped"
+      retries: 60  # Check for 10 minutes max
+      delay: 10
+      # CRITICAL: Fail if the Proxmox task Exit Status is NOT "OK"
+      # This catches "failed to stat" errors immediately.
+      failed_when: 
+        - task_status.json.data.status == "stopped" 
+        - task_status.json.data.exitstatus != "OK"
 
-    # ==========================================================================
-    # 4. CONFIGURATION FIXES (NUMA & TEMPLATE)
-    # ==========================================================================
-    - name: Enable NUMA (API Direct)
-      ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/config"
-        method: POST
-        validate_certs: false
-        headers:
-          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
-        body_format: json
-        body:
-          numa: 1
-      changed_when: true
-
+    # --------------------------------------------------------------------------
+    # 4. FINALIZE (CONVERT TO TEMPLATE)
+    # --------------------------------------------------------------------------
     - name: Convert to Template (API Direct)
       ansible.builtin.uri:
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/template"
