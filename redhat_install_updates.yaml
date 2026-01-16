@@ -6,16 +6,17 @@
     # --- RED HAT LOGIC ---
     - name: Handle Red Hat Registration and Updates
       block:
-        - name: Verify Registration via RHSM Facts
-          # This module refreshes subscription facts specifically
-          community.general.redhat_subscription_info:
-          register: rhsm_info
+        - name: Get subscription identity
+          ansible.builtin.command: subscription-manager identity
+          register: rh_identity
+          changed_when: false
+          failed_when: false
 
         - name: Fail if Red Hat is not registered
           ansible.builtin.fail:
-            msg: "System is Red Hat but NOT registered according to RHSM."
-          # Logic: If the list of subscriptions is empty, it's not registered
-          when: rhsm_info.subscriptions | length == 0
+            msg: "System is Red Hat but NO System ID found. Please register."
+          # If the command returns 'container' or 'not yet registered', rc will be non-zero
+          when: rh_identity.rc != 0
 
         - name: Install all updates for Red Hat
           ansible.builtin.dnf:
