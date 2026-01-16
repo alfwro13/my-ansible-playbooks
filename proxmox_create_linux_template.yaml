@@ -1,5 +1,5 @@
 ---
-- name: Create Universal VM Template (Proxmox API)
+- name: Create Universal VM Template (API Direct)
   hosts: all
   connection: local
   gather_facts: false
@@ -10,7 +10,7 @@
 
   tasks:
     # --------------------------------------------------------------------------
-    # 0. VALIDATION: Ensure all variables (including Node Name) are present
+    # 0. SETUP: Detect Node & Validate Inputs
     # --------------------------------------------------------------------------
     - name: Validate Required Inputs
       ansible.builtin.debug:
@@ -18,7 +18,7 @@
       vars:
         check_id: "{{ template_id | mandatory }}"
         check_name: "{{ vm_name | mandatory }}"
-        check_node: "{{ target_node | mandatory }}" # <--- Now Mandatory
+        check_node: "{{ target_node | mandatory }}"
         check_url: "{{ image_url | mandatory }}"
         check_store: "{{ storage | mandatory }}"
         check_pool: "{{ resource_pool | mandatory }}"
@@ -26,13 +26,12 @@
     - name: "Debug: Configuration Review"
       debug:
         msg: 
-          - "Target API IP:  {{ ansible_host }}"
           - "Target Node:    {{ target_node }}"
           - "Template ID:    {{ template_id }}"
-          - "VM Name:        {{ vm_name }}"
+          - "Image URL:      {{ image_url }}"
 
     # --------------------------------------------------------------------------
-    # 1. CLEANUP: Destroy any existing VM/Template
+    # 1. CLEANUP: Destroy any existing VM (Using Module)
     # --------------------------------------------------------------------------
     - name: Destroy existing VM/Template (ID {{ template_id }})
       community.proxmox.proxmox_kvm:
@@ -40,54 +39,67 @@
         api_user: "{{ ansible_user.split('!')[0] }}"
         api_token_id: "{{ ansible_user.split('!')[1] }}"
         api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"   # <--- Uses the Survey Variable
+        node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         state: absent
       failed_when: false 
 
     # --------------------------------------------------------------------------
-    # 2. CREATE: Build VM and Download Disk via API
+    # 2. CREATE: Direct API Call (Bypassing Module Limits)
     # --------------------------------------------------------------------------
-    - name: Create VM and Import Disk from URL
-      community.proxmox.proxmox_kvm:
-        api_host: "{{ ansible_host }}"
-        api_user: "{{ ansible_user.split('!')[0] }}"
-        api_token_id: "{{ ansible_user.split('!')[1] }}"
-        api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"
-        vmid: "{{ template_id }}"
-        name: "{{ vm_name }}"
-        pool: "{{ resource_pool }}"
-        
-        # Hardware Configuration
-        memory: "{{ vm_memory | default(2048) }}"
-        cores: "{{ vm_cores | default(2) }}"
-        net:
+    - name: Create VM and Trigger Disk Import (Direct API)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu"
+        method: POST
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+        body_format: json
+        body:
+          vmid: "{{ template_id }}"
+          name: "{{ vm_name }}"
+          pool: "{{ resource_pool }}"
+          memory: "{{ vm_memory | default(2048) }}"
+          cores: "{{ vm_cores | default(2) }}"
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
-        scsihw: virtio-scsi-pci
-        
-        # FIX: URL-encode the image URL so Proxmox doesn't split on 'https:'
-        scsi:
-          scsi0: "{{ storage }}:0,import-from={{ image_url | urlencode }},ssd=1,discard=on"
-        
-        # CLOUD-INIT
-        ide:
+          scsihw: "virtio-scsi-pci"
+          ostype: "l26"
+          
+          # DIRECT URL IMPORT:
+          # We send this as a raw string. Proxmox handles the parsing, not Ansible.
+          scsi0: "{{ storage }}:0,import-from={{ image_url }},ssd=1,discard=on"
           ide2: "{{ storage }}:cloudinit"
-        
-        # BOOT CONFIG
-        boot: "order=scsi0"
-        
-        # ADVANCED SETTINGS
-        ostype: l26
-        vga: std
-        agent: "enabled=1,fstrim_cloned_disks=1"
-        hotplug: "disk,network,usb,memory,cpu"
-        
-        state: present
-        timeout: 600
+          boot: "order=scsi0"
+          
+          # Advanced
+          agent: "1,fstrim_cloned_disks=1"
+          hotplug: "disk,network,usb,memory,cpu"
+          vga: "std"
+          
+      register: create_task
+      changed_when: true
 
     # --------------------------------------------------------------------------
-    # 3. FINALIZE: Convert the VM to a Template
+    # 3. MONITORING: Wait for the Download/Import to Finish
+    # --------------------------------------------------------------------------
+    - name: Wait for VM Creation and Disk Download
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/tasks/{{ create_task.json.data }}/status"
+        method: GET
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ ansible_user }}={{ pve_password }}"
+      register: task_status
+      # Check every 10 seconds, up to 10 minutes (60 retries)
+      until: task_status.json.data.status == "stopped"
+      retries: 60
+      delay: 10
+      failed_when: 
+        - task_status.json.data.status == "stopped" 
+        - task_status.json.data.exitstatus != "OK"
+
+    # --------------------------------------------------------------------------
+    # 4. FINALIZE: Convert to Template
     # --------------------------------------------------------------------------
     - name: Convert VM {{ template_id }} to Template
       community.proxmox.proxmox_kvm:
@@ -95,6 +107,6 @@
         api_user: "{{ ansible_user.split('!')[0] }}"
         api_token_id: "{{ ansible_user.split('!')[1] }}"
         api_token_secret: "{{ pve_password }}"
-        node: "{{ target_node }}"   # <--- Uses the Survey Variable
+        node: "{{ target_node }}"
         vmid: "{{ template_id }}"
         template: true
