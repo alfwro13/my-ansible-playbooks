@@ -1,3 +1,0 @@
-collections:
-  - name: community.general
-    version: 8.2.0  # Optional: pin a specific version for stability

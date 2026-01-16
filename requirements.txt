@@ -1,2 +1,0 @@
-proxmoxer
-requests>=2.0.0  # Proxmoxer usually needs requests, though it handles its own deps.
