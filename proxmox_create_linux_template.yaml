@@ -24,13 +24,21 @@
         check_name: "{{ vm_name | mandatory }}"
         check_pool: "{{ resource_pool | mandatory }}"
 
+    # FIX: Automatically rename .img to .qcow2 because the Proxmox 'download-url' API 
+    # rejects .img extensions, even though the GUI 'Upload' accepts them.
+    # Since Ubuntu .img files are actually QCOW2 format, this is safe.
+    - name: Sanitize Filename (Ensure .qcow2 extension)
+      ansible.builtin.set_fact:
+        final_filename: "{{ image_filename | regex_replace('\\.img$', '.qcow2') }}"
+
     - name: "Debug: Configuration Review"
       debug:
         msg: 
           - "Target Node:     {{ target_node }}"
           - "Storage:         {{ storage }}"
           - "Download URL:    {{ image_url }}"
-          - "Filename:        {{ image_filename }}"
+          - "Input Filename:  {{ image_filename }}"
+          - "Save As:         {{ final_filename }}"
           - "Template ID:     {{ template_id }}"
 
     # ==========================================================================
@@ -46,7 +54,8 @@
         body_format: json
         body:
           content: "import"
-          filename: "{{ image_filename }}"
+          # Use the sanitized .qcow2 filename to pass API validation
+          filename: "{{ final_filename }}"
           url: "{{ image_url }}"
       register: download_task
       changed_when: true
@@ -101,18 +110,20 @@
           net0: "virtio,bridge={{ vm_bridge | default('vmbr0') }}"
         scsihw: virtio-scsi-pci
         
+        # Import using the .qcow2 filename
         scsi:
-          scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ image_filename }},ssd=1,discard=on"
+          scsi0: "{{ storage }}:0,import-from={{ storage }}:import/{{ final_filename }},ssd=1,discard=on"
         
         ide:
           ide2: "{{ storage }}:cloudinit"
         boot: "order=scsi0"
+        
         ostype: l26
         vga: std
         agent: "enabled=1,fstrim_cloned_disks=1"
         hotplug: "disk,network,usb,memory,cpu"
         
-        state: present # Ensures VM is created but STOPPED
+        state: present
         timeout: 300
 
     # ==========================================================================
@@ -130,7 +141,6 @@
           numa: 1
       changed_when: true
 
-    # FIX: Use Direct API call to convert to template (More robust than module)
     - name: Convert to Template (API Direct)
       ansible.builtin.uri:
         url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ template_id }}/template"
@@ -146,7 +156,7 @@
     # ==========================================================================
     - name: Delete Source Image from Storage
       ansible.builtin.uri:
-        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:import/{{ image_filename }}"
+        url: "https://{{ ansible_host }}:8006/api2/json/nodes/{{ target_node }}/storage/{{ storage }}/content/{{ storage }}:import/{{ final_filename }}"
         method: DELETE
         validate_certs: false
         headers:
@@ -157,5 +167,5 @@
 
     - name: Report Cleanup Status
       ansible.builtin.debug:
-        msg: "Source image {{ image_filename }} deleted from {{ storage }}."
+        msg: "Source image {{ final_filename }} deleted from {{ storage }}."
       when: delete_result.status == 200
