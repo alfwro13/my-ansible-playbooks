@@ -1,5 +1,6 @@
 ---
 - name: Create Universal VM Template from Manual Upload
+  hosts: all
   connection: local
   gather_facts: false
 
