@@ -73,23 +73,25 @@
       register: rhel_install
       when: ansible_os_family == 'RedHat'
 
-    # ---------------------------------------------------------
+# ---------------------------------------------------------
     # 6. CONFIGURATION & REBOOT
     # ---------------------------------------------------------
-    - name: Ensure boot target is set to graphical
+    - name: Set default boot target to graphical
+      ansible.builtin.command: systemctl set-default graphical.target
+      register: target_result
+      changed_when: "'Removed' in target_result.stderr or 'Created' in target_result.stderr"
+
+    - name: Ensure graphical target is active now
       ansible.builtin.systemd:
         name: graphical.target
+        state: started
         enabled: yes
-        masked: no
-
-    - name: Set default target to graphical
-      ansible.builtin.file:
-        src: /lib/systemd/system/graphical.target
-        dest: /etc/systemd/system/default.target
-        state: link
-        force: yes
 
     - name: Reboot to initialize Desktop Environment
       ansible.builtin.reboot:
         msg: "Rebooting to initialize GUI"
-      when: (deb_install is changed) or (rhel_install is changed)
+      # Reboot if software was installed OR if we just changed the boot target
+      when: >
+        (deb_install is changed) or 
+        (rhel_install is changed) or
+        (target_result is changed)
