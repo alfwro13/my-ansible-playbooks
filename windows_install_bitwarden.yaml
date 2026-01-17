@@ -11,3 +11,5 @@
       win_chocolatey:
         name: bitwarden
         state: present
+        force: yes
+        install_args: '/ALLUSERS /D=C:\Program Files\Bitwarden'
