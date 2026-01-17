@@ -7,7 +7,7 @@
     - chocolatey
 
   tasks:
-    - name: Install BitWarden
+    - name: Install Bitwarden Desktop
       win_chocolatey:
         name: bitwarden
         state: present
