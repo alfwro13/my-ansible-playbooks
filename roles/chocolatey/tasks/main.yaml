@@ -4,10 +4,26 @@
     path: 'C:\ProgramData\chocolatey\bin\choco.exe'
   register: choco_installed
 
-- name: Install Chocolatey (if missing)
+- name: Create Temp Directory for Installer
+  win_file:
+    path: C:\Temp
+    state: directory
+  when: not choco_installed.stat.exists
+
+- name: Download Chocolatey Install Script
+  win_get_url:
+    url: https://community.chocolatey.org/install.ps1
+    dest: C:\Temp\choco-install.ps1
+  when: not choco_installed.stat.exists
+
+- name: Run Chocolatey Installer from Disk
   win_shell: |
     Set-ExecutionPolicy Bypass -Scope Process -Force;
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072;
-    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    & C:\Temp\choco-install.ps1
   when: not choco_installed.stat.exists
-  changed_when: true
+
+- name: Remove Installer Script
+  win_file:
+    path: C:\Temp\choco-install.ps1
+    state: absent
+  when: not choco_installed.stat.exists
