@@ -1,0 +1,13 @@
+---
+- name: Install BitWarden via Chocolatey
+  hosts: windows
+  gather_facts: no
+
+  roles:
+    - chocolatey
+
+  tasks:
+    - name: Install BitWarden
+      win_chocolatey:
+        name: bitwarden
+        state: present
