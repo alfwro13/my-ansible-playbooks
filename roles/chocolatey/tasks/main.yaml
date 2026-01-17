@@ -1,0 +1,13 @@
+---
+- name: Check if Chocolatey is already installed
+  win_stat:
+    path: 'C:\ProgramData\chocolatey\bin\choco.exe'
+  register: choco_installed
+
+- name: Install Chocolatey (if missing)
+  win_shell: |
+    Set-ExecutionPolicy Bypass -Scope Process -Force;
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072;
+    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+  when: not choco_installed.stat.exists
+  changed_when: true
